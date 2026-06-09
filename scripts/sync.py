@@ -155,13 +155,14 @@ def parse_all_entries_from_html(html_path: Path) -> list[dict]:
     content = re.sub(r'</span>', '', content)
 
     # 格式: XXXX更新：名称：file_id  密码：pwd
-    pattern = r'(\d{4}更新)[：:]([^：:]+)[：:]([a-zA-Z0-9]+)(?:\s+密码[：:]([a-zA-Z0-9]+))?'
+    # 注：file_id 字符类允许 /，因为坚果云 HTML 偶发会在 file_id 前加脏字符 /（2026-06-09 修复）
+    pattern = r'(\d{4}更新)[：:]([^：:]+)[：:]([a-zA-Z0-9/]+)(?:\s+密码[：:]([a-zA-Z0-9]+))?'
 
     entries = []
     for m in re.finditer(pattern, content):
         date_str = m.group(1)
         name = m.group(2).strip()
-        file_id = m.group(3).strip()
+        file_id = m.group(3).strip().lstrip('/')  # 容错：去掉坚果云脏字符 /
         password = m.group(4).strip() if m.group(4) else None
 
         if len(file_id) >= 6:
@@ -505,7 +506,7 @@ def main():
         log(f"[FAIL] {e}")
         return
 
-    new_entries = [e for e in all_entries if e["line_no"] > start_line]
+    new_entries = [e for e in all_entries if e["line_no"] >= start_line]
 
     if not new_entries:
         log(f"\n没有新条目需要下载（上次已同步到最新）")

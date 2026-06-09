@@ -32,12 +32,13 @@ def parse_all_entries(filepath: Path) -> list[dict]:
         if not line or "：" not in line:
             continue
         normalized = line.replace("：", ":").replace("；", ";").replace("：", ":")
-        m = re.match(r"^(\d{4}更新)\s*:\s*(.+?)\s*:\s*([A-Za-z0-9]+)", normalized)
+        # 注：file_id 字符类允许 /，容错坚果云 HTML 偶发脏字符
+        m = re.match(r"^(\d{4}更新)\s*:\s*(.+?)\s*:\s*([A-Za-z0-9/]+)", normalized)
         if not m:
             continue
         index   = m.group(1)
         name    = m.group(2).strip()
-        file_id = m.group(3).strip()
+        file_id = m.group(3).strip().lstrip('/')  # 容错：去掉脏字符 /
         if len(file_id) < 6:
             continue
         pwd_m = re.search(r"密码\s*:\s*([A-Za-z0-9]+)", normalized)
@@ -162,7 +163,7 @@ def main():
     start_line = find_last_date_line(all_entries, last_date)
 
     # 筛选从 start_line 之后的所有条目
-    entries = [e for e in all_entries if e["line_no"] > start_line]
+    entries = [e for e in all_entries if e["line_no"] >= start_line]
 
     if not entries:
         print(f"\n⚠ 从 {last_date}更新 之后没有找到任何条目")
