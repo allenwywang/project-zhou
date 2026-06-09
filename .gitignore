@@ -4,6 +4,7 @@ assets/
 archive/
 markdown/*.pdf
 markdown/_qc_report.json
+茶馆杂谈文件同步/    # 下载数据（PDF/zip），运行时生成不入仓
 
 # 进度和日志
 progress.json
