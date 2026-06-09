@@ -29,9 +29,9 @@ except ImportError as e:
     print("请安装: pip install pdfplumber PyMuPDF")
     raise SystemExit(1)
 
-# ── 配置 ──────────────────────────────────────────────────
-DOWNLOAD_DIR = Path(r"C:\Users\allenwywang\allenwywang的同步盘\Allen documents\新建文件夹")
-OUTPUT_DIR   = DOWNLOAD_DIR.parent / "markdown"
+# ── 配置（Mac 本地适配）──────────────────────────────────
+DOWNLOAD_DIR = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
+OUTPUT_DIR   = Path("/Users/allenwywang/历史学习资料/历史学习/raw/articles/茶馆杂谈")
 QC_REPORT    = OUTPUT_DIR / "_qc_report.json"
 
 # 质检阈值

@@ -16,10 +16,10 @@ import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-# ── 配置 ──────────────────────────────────────────────────
-SOURCE_FILE    = Path(r"C:\Users\Administrator\Downloads\特殊秘籍20240405.txt")
+# ── 配置（Mac 本地适配）──────────────────────────────────
+SOURCE_FILE    = Path.home() / "Downloads" / "特殊秘籍20240405.txt"
 LANZOU_BASE_URL = "https://lanzoui.com/"
-DOWNLOAD_DIR    = Path(r"C:\Users\allenwywang\allenwywang的同步盘\Allen documents\新建文件夹")
+DOWNLOAD_DIR   = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
 # ─────────────────────────────────────────────────────────
 
 
@@ -180,6 +180,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
+            channel="chrome",
             headless=True,
             downloads_path=str(DOWNLOAD_DIR),
         )

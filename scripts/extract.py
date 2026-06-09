@@ -13,10 +13,10 @@ from pathlib import Path
 # 支持的压缩文件扩展名
 ARCHIVE_SUFFIXES = {".zip", ".rar", ".7z"}
 
-# ── 配置 ──────────────────────────────────────────────────
-DOWNLOAD_DIR = Path(r"C:\Users\allenwywang\allenwywang的同步盘\Allen documents\新建文件夹")
+# ── 配置（Mac 本地适配）──────────────────────────────────
+DOWNLOAD_DIR = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
 ARCHIVE_SUFFIXES = {".zip", ".rar", ".7z"}
-SEVENZIP = r"C:\Program Files\7-Zip\7z.exe"
+SEVENZIP = "7z"  # Homebrew p7zip 安装后的命令
 # ─────────────────────────────────────────────────────────
 
 

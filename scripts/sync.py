@@ -32,13 +32,14 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_to_md import PdfConverter, auto_detect_mode
 
-# ── 配置 ──────────────────────────────────────────────────
+# ── 配置（Mac 本地适配）──────────────────────────────────
 PROJECT_ROOT    = Path(__file__).parent.parent
 PROGRESS_FILE   = PROJECT_ROOT / "progress.json"
-SOURCE_FILE     = Path(r"C:\Users\Administrator\Downloads\特殊秘籍20240405.txt")
-DOWNLOAD_DIR    = Path(r"C:\Users\allenwywang\allenwywang的同步盘\Allen documents\新建文件夹")
+SOURCE_FILE     = Path.home() / "Downloads" / "特殊秘籍20240405.txt"
+DOWNLOAD_DIR    = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
+MARKDOWN_DIR    = Path("/Users/allenwywang/历史学习资料/历史学习/raw/articles/茶馆杂谈")
 LANZOU_BASE_URL = "https://lanzoui.com/"
-SEVENZIP        = r"C:\Program Files\7-Zip\7z.exe"
+SEVENZIP        = "7z"  # Homebrew p7zip 安装后的命令
 ARCHIVE_SUFFIXES = {".zip", ".rar", ".7z"}
 # ─────────────────────────────────────────────────────────
 
@@ -70,28 +71,62 @@ def save_progress(data: dict):
 # ═════════════════════════════════════════════════════════
 
 def fetch_jianguoyun():
-    """抓取坚果云分享页，保存HTML和截图"""
+    """抓取坚果云分享页，保存HTML和截图。
+
+    密码最多尝试 3 次（项目规则，避免触发坚果云封禁）。
+    失败时直接抛出异常，停下来等用户确认新密码。
+    """
     log("启动浏览器，访问坚果云...")
 
+    MAX_PWD_ATTEMPTS = 3
+    PASSWORD = "psw0528"
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=_headless)
+        browser = p.chromium.launch(channel="chrome", headless=_headless)
         page = browser.new_page()
         page.goto("https://www.jianguoyun.com/p/DcEaxJgQ-P7XCRiJnL4FIAA", timeout=30000)
         page.wait_for_load_state("networkidle")
         time.sleep(1)
 
-        # 填密码
-        pwd_input = page.query_selector('input#access-pwd')
-        if pwd_input:
-            log("填入访问密码...")
-            pwd_input.fill("0403")
+        # 填密码循环（最多 3 次）
+        attempt = 0
+        while True:
+            pwd_input = page.query_selector('input#access-pwd')
+            if not pwd_input:
+                log("密码验证通过")
+                break
+
+            attempt += 1
+            if attempt > MAX_PWD_ATTEMPTS:
+                browser.close()
+                raise RuntimeError(
+                    f"坚果云密码已尝试 {MAX_PWD_ATTEMPTS} 次仍未通过，"
+                    "按项目规则停下来问用户拿新密码。"
+                )
+
+            log(f"[密码 {attempt}/{MAX_PWD_ATTEMPTS}] 填入密码...")
+            pwd_input.fill(PASSWORD)
             ok_btn = page.query_selector(".ok-button")
             if ok_btn:
                 ok_btn.click()
-                time.sleep(3)
 
-        page.wait_for_load_state("networkidle")
-        time.sleep(5)
+            time.sleep(3)
+            page.wait_for_load_state("networkidle")
+            time.sleep(2)
+
+            # 检查封禁提示
+            err = page.query_selector('.error-msg')
+            if err:
+                err_text = err.inner_text()
+                if "禁止访问" in err_text:
+                    browser.close()
+                    raise RuntimeError(
+                        "坚果云封禁当前 IP（密码错误次数过多），"
+                        "需要换 IP 或等待后再试。"
+                    )
+                elif "密码" in err_text and ("错误" in err_text or "失败" in err_text):
+                    log(f"  [FAIL] 密码错误，还剩 {MAX_PWD_ATTEMPTS - attempt} 次机会")
+                    continue
 
         # 保存截图和HTML
         (PROJECT_ROOT / "assets").mkdir(exist_ok=True)
@@ -274,6 +309,7 @@ def download_entries(entries: list[dict]) -> tuple[int, int]:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
+            channel="chrome",
             headless=_headless,
             downloads_path=str(DOWNLOAD_DIR),
         )
@@ -515,7 +551,7 @@ def main():
     log(f"转换模式: {md_mode}")
 
     md_converter = PdfConverter(mode=md_mode)
-    md_summary = md_converter.convert_batch(DOWNLOAD_DIR, DOWNLOAD_DIR.parent / "markdown")
+    md_summary = md_converter.convert_batch(DOWNLOAD_DIR, MARKDOWN_DIR)
     md_stats = md_summary.get("stats", {})
     log(f"转换完成: 成功 {md_stats.get('passed', 0)} 个, 警告 {md_stats.get('warn', 0)} 个, 失败 {md_stats.get('failed', 0)} 个")
     if md_stats.get("skipped"):
