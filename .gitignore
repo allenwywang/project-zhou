@@ -1,0 +1,15 @@
+# 运行时数据（每次执行生成）
+data/
+assets/
+archive/
+markdown/*.pdf
+markdown/_qc_report.json
+
+# 进度和日志
+progress.json
+*.log
+download_log.txt
+
+# 系统文件
+.DS_Store
+Thumbs.db
