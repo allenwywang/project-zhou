@@ -138,6 +138,10 @@ Playwright 自带 chromium 国内 CDN 慢，`playwright install chromium` 卡在
 ### 8. 补跑失败条目的临时脚本（2026-06-09）
 sync.py 默认从 `last_sync_date` 之后全部重跑，无法精准补单。**解决方案**：写一次性脚本 `_retry_failed.py`，调用 sync.py 的 `download_one / extract_archives / rename_exe_to_pdf` 工具函数，跑完即删（不入 git）。
 
+### 9. 解析坚果云 HTML 的两个 bug（2026-06-09）
+- **起点排除当天**：起点过滤 `line_no > start_line` 严格大于，导致 last_date 当天最右列 entry 被漏（如 0526 传 0526 时 JM1066 被漏）。**修复**：改 `>=`。
+- **file_id 脏字符**：坚果云 HTML 偶发在 file_id 前加脏 `/`（如 `0528更新：JM1067：/iW1o63qioede`），正则 `[a-zA-Z0-9]+` 拒绝 `/` 导致整个 entry 解析失败。**修复**：正则字符类改 `[a-zA-Z0-9/]+`，file_id 取出后 `lstrip('/')` 清理。
+
 ## 注意事项
 
 - 蓝奏云下载按钮点击后需等待文件缓存加载，否则文件名可能乱码（已在代码中处理）
