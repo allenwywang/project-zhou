@@ -92,7 +92,8 @@ project-zhou/
 例：`0526更新：JM1066 从冻省展开（1）：iW1o63qioede  密码：1066`
 
 正则字符类的细节（重要）：
-- file_id 字符类**包含 `/`**——因为坚果云 HTML 偶发会在 file_id 前加脏字符 `/`，解析后会 `lstrip('/')` 清理掉。
+- file_id 字符类**包含 `/`**——因为坚果云 HTML 偶发会在 file_id 前加脏字符 `/`，解析后会 `lstrip('/')` 清理掉。允许在前面再多加一个 `\/?` 兼容历史脏字符（如 `0528更新：JM1067：/iW1o63qioede`）。
+- **名称可以含半角冒号**（如 `JM:1074`、`JM:1086`）——这是 2026-07-21 发现的真实数据。解析器用贪婪 `.+` + 行尾 `$` 锚定 + MULTILINE，配合 file_id 必须以 `i` 开头且 ≥ 9 字符，让引擎停在正确的 file_id 上。
 - 起点过滤使用 `>=`（**不是** `>`）：找到指定日期在所有出现中**行号最大的那一个**作为起点，取之后的条目。这是为了保证"上一日当天最右列"那条不会漏掉。
 
 ### 4.2 进度锚点（同步状态机）
@@ -243,18 +244,44 @@ python pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 
 ## 9. 修改时的红线
 
-- **不要改动** file_id 正则 `r'(\d{4}更新)[：:]([^：:]+)[：:]([a-zA-Z0-9/]+)'` 中的字符类——移除 `/` 会让坚果云脏字符让整行解析失败。
+- **不要改动** file_id 正则 `r'^(\d{4}更新)[：:](.+)[：:]\s*(\/?i[a-zA-Z0-9/]{8,})(?:[：:\s]*密码[：:]([a-zA-Z0-9]+))?\s*$'` 中的 file_id 字符类 `[a-zA-Z0-9/]`——保留 `/` 是为了兼容历史脏字符前缀。`i` 前缀是 lanzou ID 的硬约定（10+ 字符）；允许前面的 `\/?` 和 `[：:\s]*密码` 是 2026-07-21 补的容错。
 - **不要把** `find_last_date_line` 里 `max(...) by line_no` 改成单纯按出现位置——多列数据下会重复抓旧列。
 - **不要把** `>= start_line` 改回 `> start_line`——后者会漏掉"上次日期当天最后一列"那条。`download_from_local.py` 老 bug 复盘过。
 - **不要删除** `renamed = rename_exe_to_pdf()` 这一步——`pdf_to_md.py.convert_batch()` 只 glob `*.pdf`，没有它就少掉一批。
 - **不要移除** `channel="chrome"`——见 §7.5。
 - **不要**在 `progress.json.history` 的 entry 里增删字段名——下游人工复盘依赖稳定 schema。
+- **不要**绕过 `_file_matches_short_id()` 的前缀表（`{"JM": ["JM"], "WP": ["外篇","WP"], "python": ["python学习材料","python"]}`）——WP 和 python 的真实下载文件名跟条目名不一致，验证靠这张表对应。
 
 ---
 
 ## 10. 版本/状态速览
 
 - 主推入口：`scripts/sync.py`
-- 最近一次同步：2026-07-21，0704~0721，14 条全成功（JM1089 首次下载失败后补跑成功）
-- 累计下载：47
+- 最近一次同步：2026-07-21，0704~0721，14 条全成功（JM1089 首次下载失败后补跑成功；同日新增完整性验证步骤后补回 9 条历史遗漏）
+- 累计下载：56
+- 完整性验证：0526~0721 范围 56/56 完整、0 序列断号（JM/WP/python学习材料 三个系列）
 - Markdown 模式：当前只用 `light`（双引擎文本）；`medium` / `full` 是预留接口（TODO 接入 multidoc-transfer-multimodal）
+
+## 11. 完整性验证（项目迭代，2026-07-21）
+
+`sync.py` 新增步骤 8：`verify_completeness()`。在 last_date ~ latest_date 范围内逐条检查：
+
+- **每条 4 状态**：`ok`（PDF + MD 都有）/ `needs_convert`（有 PDF 无 MD）/ `needs_unzip`（zip 未解压）/ `needs_rename`（.exe 未重命名）/ `missing`（什么都没）
+- **匹配逻辑**：`_file_matches_short_id()` 把条目短 ID（"JM1066"、"WP330"、"python873"）映射到下载产物的真实文件名前缀（"JM1066 <title>"、"外篇330"、"python学习材料873"）做模糊匹配
+- **序列断号**：`_detect_sequence_gaps()` 检测 JM / WP / python学习材料 三个系列的连续性，输出 `[1067, 1074, 1089]` 这种缺口数组
+- **报告落盘**：`data/completeness_report.json`（`{ anchor_date, latest_date, by_status, missing, needs_convert, needs_unzip, sequence_gaps }`）
+
+**典型用法**——补跑历史遗漏：
+```python
+python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+import sync
+from pathlib import Path
+entries = sync.parse_all_entries_from_html(Path('data/jianguoyun_page.html'))
+rep = sync.verify_completeness(entries, '0526', '0721')
+for r in rep['missing']:
+    print(r['index'], r['name'], '->', r['file_id'])
+"
+```
+
+输出 missing 列表 → 手喂给 `sync.download_entries([...])` 补下 → 跑 `extract_archives()` + `rename_exe_to_pdf()` + `pdf_to_md.py --mode light` → 再跑一次 `verify_completeness()` 确认 0 缺失。

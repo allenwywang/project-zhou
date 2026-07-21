@@ -16,6 +16,7 @@
     6. 处理 .exe 伪装 PDF 文件
     7. PDF → Markdown 转换（含图片检测和双引擎质检）
     8. 更新 progress.json
+    9. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
 """
 
 import json
@@ -152,14 +153,21 @@ def parse_all_entries_from_html(html_path: Path) -> list[dict]:
     # 去掉span标签干扰
     content = re.sub(r'<span class="hljs-selector-tag">', '', content)
     content = re.sub(r'<span class="hljs-selector-pseudo">', '', content)
+    content = re.sub(r'<span class="hljs-section">', '', content)  # 2026-07-21 新增：覆盖大部分条目
     content = re.sub(r'</span>', '', content)
 
     # 格式: XXXX更新：名称：file_id  密码：pwd
-    # 注：file_id 字符类允许 /，因为坚果云 HTML 偶发会在 file_id 前加脏字符 /（2026-06-09 修复）
-    pattern = r'(\d{4}更新)[：:]([^：:]+)[：:]([a-zA-Z0-9/]+)(?:\s+密码[：:]([a-zA-Z0-9]+))?'
+    # 注：
+    #   1. file_id 字符类允许 /，因为坚果云 HTML 偶发会在 file_id 前加脏字符 /（2026-06-09 修复，红线）
+    #   2. 名称段用贪婪 .+，并强制 file_id 以 i 开头（lanzou 所有 ID 都是 i+字母数字）且总长 >= 10
+    #      ——这让正则引擎在冒号面前能稳定停在「真正」的文件 ID 上。旧版 [^：:]+ 会被冒号截断，
+    #      把 "JM:1074" 错配为 name="JM"、file_id="1074"（<6 字符虽被长度过滤掉但浪费了一次回溯）
+    #   3. 分隔符与 file_id 之间允许 \s*，应对 "WP330:  iDDbw..." 这种双空格
+    #   4. 行尾 $ 锚定 + MULTILINE，确保只匹配完整一行而非 HTML 标签内的片段
+    pattern = r'^(\d{4}更新)[：:](.+)[：:]\s*(\/?i[a-zA-Z0-9/]{8,})(?:[：:\s]*密码[：:]([a-zA-Z0-9]+))?\s*$'
 
     entries = []
-    for m in re.finditer(pattern, content):
+    for m in re.finditer(pattern, content, re.MULTILINE):
         date_str = m.group(1)
         name = m.group(2).strip()
         file_id = m.group(3).strip().lstrip('/')  # 容错：去掉坚果云脏字符 /
@@ -436,6 +444,215 @@ def rename_exe_to_pdf() -> int:
 
 
 # ═════════════════════════════════════════════════════════
+#  步骤7（项目迭代）：完整性验证
+# ═════════════════════════════════════════════════════════
+
+# 命名约定映射：条目中叫 "WP330"，下载后实际文件叫 "外篇330.zip"
+# ——这是源页面的命名 vs 蓝奏云原始上传名的差异。
+WP_TO_WAIPIAN = re.compile(r"^WP(\d+)$")
+
+
+def _candidate_filenames(name: str) -> list[str]:
+    """根据条目名推导所有可能的下载文件名（去扩展名）"""
+    candidates = [name]
+    m = WP_TO_WAIPIAN.match(name)
+    if m:
+        candidates.append(f"外篇{m.group(1)}")
+    return candidates
+
+
+def _entry_short_id(entry_name: str) -> tuple[str, str]:
+    """
+    把 entry_name 解析为 (前缀, 数字串)，用于模糊匹配下载/产物文件名。
+    例: 'JM1066' -> ('JM', '1066')
+        'JM:1074' -> ('JM', '1074')   —— 冒号归一为 JM
+        'WP330' -> ('WP', '330')  —— 实际文件名前缀为 外篇330
+        'python873' -> ('python', '873')  —— 实际为 python学习材料873
+    """
+    m = re.match(r"^(JM:?|WP|python)(\d+)$", entry_name)
+    if not m:
+        return (entry_name, "")
+    prefix = m.group(1).rstrip(":")  # 'JM:' -> 'JM'
+    return (prefix, m.group(2))
+
+
+def _file_matches_short_id(file_stem: str, entry_name: str) -> bool:
+    """判断 file_stem（无扩展名的文件名）是否属于 entry_name 对应的下载产物"""
+    prefix, num = _entry_short_id(entry_name)
+    if not num:
+        return file_stem.startswith(entry_name)
+    # 不同系列对应的实际文件名前缀
+    real_prefixes = {
+        "JM": ["JM"],
+        "WP": ["外篇", "WP"],
+        "python": ["python学习材料", "python"],
+    }.get(prefix, [prefix])
+    for rp in real_prefixes:
+        candidate = f"{rp}{num}"
+        if file_stem == candidate:
+            return True
+        if file_stem.startswith(candidate + " "):
+            return True
+    return False
+
+
+def _check_entry_status(entry: dict, download_stems: set, md_stems: set) -> dict:
+    """
+    检查单个条目在 download/markdown 两侧的存在状态。
+
+    关键差异：解析器拿到的 name 是短 ID（"JM1066"、"WP330"、"python873"），
+    但下载后的实际文件名是 lanzou 返回的全标题（"JM1066 从冻省展开（2）.pdf"、
+    "外篇330.zip"），所以按 _file_matches_short_id 做基于短 ID 的模糊匹配。
+    """
+    name = entry["name"]
+
+    def find_match(stems: set, ext: str):
+        for s in stems:
+            if not s.endswith(ext):
+                continue
+            file_stem = s[: -len(ext)]
+            if _file_matches_short_id(file_stem, name):
+                return s
+        return None
+
+    pdf_hit = find_match(download_stems, ".pdf")
+    exe_hit = find_match(download_stems, ".exe")
+    zip_hit = find_match(download_stems, ".zip")
+    md_hit = find_match(md_stems, ".md")
+
+    if pdf_hit and md_hit:
+        status = "ok"
+    elif pdf_hit and not md_hit:
+        status = "needs_convert"
+    elif exe_hit and not pdf_hit:
+        status = "needs_rename"  # .exe 还没重命名/解压
+    elif zip_hit and not md_hit:
+        status = "needs_unzip"
+    elif not (pdf_hit or exe_hit or zip_hit):
+        status = "missing"
+    else:
+        status = "ok"
+
+    return {
+        "index": entry["index"],
+        "name": name,
+        "file_id": entry["file_id"],
+        "download": pdf_hit or exe_hit or zip_hit,
+        "markdown": md_hit,
+        "status": status,
+    }
+
+
+def _detect_sequence_gaps(entries: list[dict], prefix: str) -> list[int]:
+    """
+    在形如 "JM1066"、"WP330"、"python学习材料873" 的命名中检测断号。
+    prefix 是正则字面量前缀，例如 'JM'、'WP'、'python学习材料'。
+    返回该系列缺失的编号列表（按升序）。允许名称中含冒号（'JM:1074'）。
+    """
+    num_pat = re.compile(rf"^{re.escape(prefix)}:?(\d+)$")
+    nums = []
+    for e in entries:
+        m = num_pat.match(e["name"])
+        if m:
+            nums.append(int(m.group(1)))
+    if not nums:
+        return []
+    full = set(range(min(nums), max(nums) + 1))
+    return sorted(full - set(nums))
+
+
+def verify_completeness(
+    entries: list[dict],
+    last_date: str,
+    latest_date: str,
+    download_dir: Path = DOWNLOAD_DIR,
+    markdown_dir: Path = MARKDOWN_DIR,
+    output_path: Path = None,
+) -> dict:
+    """
+    对 last_date ~ latest_date 范围内的所有条目做完整性检查：
+    1) 每个条目 4 个状态：download / markdown / 是否解压 / 是否完成
+    2) 命名序列断号：JM / python学习材料 / WP 三个系列是否缺号
+    返回 dict，同时落盘到 data/completeness_report.json
+    """
+    start_line = find_last_date_line(entries, last_date)
+    target = [e for e in entries if e["line_no"] >= start_line]
+
+    download_stems = set()
+    if download_dir.exists():
+        for p in download_dir.iterdir():
+            if p.is_file() and p.suffix.lower() in (".pdf", ".exe", ".zip"):
+                download_stems.add(p.name)
+
+    md_stems = set()
+    if markdown_dir.exists():
+        for p in markdown_dir.iterdir():
+            if p.is_file() and p.suffix.lower() == ".md":
+                md_stems.add(p.name)
+
+    per_entry = [_check_entry_status(e, download_stems, md_stems) for e in target]
+
+    by_status = {"ok": 0, "needs_convert": 0, "needs_unzip": 0, "missing": 0}
+    for r in per_entry:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+
+    missing_rows = [r for r in per_entry if r["status"] == "missing"]
+    needs_convert_rows = [r for r in per_entry if r["status"] == "needs_convert"]
+    needs_unzip_rows = [r for r in per_entry if r["status"] == "needs_unzip"]
+
+    gaps = {
+        "JM": _detect_sequence_gaps(target, "JM"),
+        "WP": _detect_sequence_gaps(target, "WP"),
+        "python学习材料": _detect_sequence_gaps(target, "python学习材料"),
+    }
+
+    report = {
+        "anchor_date": last_date,
+        "latest_date": latest_date,
+        "checked_count": len(target),
+        "by_status": by_status,
+        "missing": missing_rows,
+        "needs_convert": needs_convert_rows,
+        "needs_unzip": needs_unzip_rows,
+        "sequence_gaps": gaps,
+    }
+
+    log("\n" + "=" * 50)
+    log("步骤8/8：完整性验证")
+    log("=" * 50)
+    log(f"检查范围: {last_date} ~ {latest_date}，共 {len(target)} 条")
+    log(f"完整    : {by_status['ok']}")
+    log(f"待转换  : {by_status['needs_convert']}")
+    log(f"待解压  : {by_status['needs_unzip']}")
+    log(f"缺失    : {by_status['missing']}")
+    if any(gaps.values()):
+        log("序列断号:")
+        for series, missing in gaps.items():
+            if missing:
+                log(f"  {series}: 缺 {len(missing)} 个 -> {missing[:20]}{'...' if len(missing)>20 else ''}")
+    if missing_rows:
+        log("缺失明细 (前 20):")
+        for r in missing_rows[:20]:
+            log(f"  {r['index']} {r['name']} -> {r['file_id']}")
+    if needs_convert_rows:
+        log("已下载但未转 Markdown (前 10):")
+        for r in needs_convert_rows[:10]:
+            log(f"  {r['index']} {r['name']}")
+    if needs_unzip_rows:
+        log("ZIP 还在未解压 (前 10):")
+        for r in needs_unzip_rows[:10]:
+            log(f"  {r['index']} {r['name']}")
+
+    if output_path is None:
+        output_path = PROJECT_ROOT / "data" / "completeness_report.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    log(f"报告写入: {output_path}")
+
+    return report
+
+
+# ═════════════════════════════════════════════════════════
 #  主控流程
 # ═════════════════════════════════════════════════════════
 
@@ -591,6 +808,9 @@ def main():
     log(f"最新时点: {latest_date}")
     log(f"下次运行将自动从 {latest_date} 继续")
     log("=" * 50)
+
+    # ── 步骤8：完整性验证 ──
+    verify_completeness(all_entries, last_date, latest_date)
 
 
 if __name__ == "__main__":
