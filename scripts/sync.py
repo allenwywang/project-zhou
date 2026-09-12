@@ -15,8 +15,9 @@
     5. 解压压缩包
     6. 处理 .exe 伪装 PDF 文件
     7. PDF → Markdown 转换（含图片检测和双引擎质检）
-    8. 更新 progress.json
-    9. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
+    8. 归档 PDF 到 MARKDOWN_DIR（双格式存档：MD 日常用 + 原版 PDF 存档）
+    9. 更新 progress.json
+    10. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
 """
 
 import json
@@ -32,6 +33,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 # 导入 PDF 转换器
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_to_md import PdfConverter, auto_detect_mode
+from archive_pdfs import archive_pdfs  # 双格式存档：原版 PDF 归档到 MARKDOWN_DIR
 
 # ── 配置（Mac 本地适配）──────────────────────────────────
 PROJECT_ROOT    = Path(__file__).parent.parent
@@ -485,7 +487,8 @@ def _file_matches_short_id(file_stem: str, entry_name: str) -> bool:
     real_prefixes = {
         "JM": ["JM"],
         "WP": ["外篇", "WP"],
-        "python": ["python学习材料", "python"],
+        # python 系列：标准是 "python学习材料"；蓝奏云偶发返回误拼 "ptyhon学习材料"（如 python904）
+        "python": ["python学习材料", "ptyhon学习材料"],
     }.get(prefix, [prefix])
     for rp in real_prefixes:
         candidate = f"{rp}{num}"
@@ -618,7 +621,7 @@ def verify_completeness(
     }
 
     log("\n" + "=" * 50)
-    log("步骤8/8：完整性验证")
+    log("步骤9/9：完整性验证")
     log("=" * 50)
     log(f"检查范围: {last_date} ~ {latest_date}，共 {len(target)} 条")
     log(f"完整    : {by_status['ok']}")
@@ -690,7 +693,7 @@ def main():
 
     # ── 步骤1：抓取坚果云 ──
     log("\n" + "=" * 50)
-    log("步骤1/5：抓取坚果云页面")
+    log("步骤1/9：抓取坚果云页面")
     log("=" * 50)
     try:
         fetch_jianguoyun()
@@ -700,7 +703,7 @@ def main():
 
     # ── 步骤2：解析条目 ──
     log("\n" + "=" * 50)
-    log("步骤2/5：解析页面提取条目")
+    log("步骤2/9：解析页面提取条目")
     log("=" * 50)
 
     # 优先使用本地txt文件（如果存在），否则从HTML解析
@@ -740,28 +743,28 @@ def main():
 
     # ── 步骤3：下载 ──
     log("\n" + "=" * 50)
-    log(f"步骤3/5：下载新条目 ({last_date} ~ {latest_date})")
+    log(f"步骤3/9：下载新条目 ({last_date} ~ {latest_date})")
     log("=" * 50)
     dl_success, dl_failed = download_entries(new_entries)
     log(f"下载完成: 成功 {dl_success} 个, 失败 {dl_failed} 个")
 
     # ── 步骤4：解压 ──
     log("\n" + "=" * 50)
-    log("步骤4/5：解压压缩包")
+    log("步骤4/9：解压压缩包")
     log("=" * 50)
     ex_success, ex_failed = extract_archives()
     log(f"解压完成: 成功 {ex_success} 个, 失败 {ex_failed} 个")
 
     # ── 步骤5：处理 .exe 伪装 ──
     log("\n" + "=" * 50)
-    log("步骤5/7：处理 .exe 伪装文件")
+    log("步骤5/9：处理 .exe 伪装文件")
     log("=" * 50)
     renamed = rename_exe_to_pdf()
     log(f"重命名完成: {renamed} 个 .exe -> .pdf")
 
     # ── 步骤6：PDF → Markdown 转换 ──
     log("\n" + "=" * 50)
-    log("步骤6/7：PDF 转 Markdown")
+    log("步骤6/9：PDF 转 Markdown")
     log("=" * 50)
 
     # 自动检测目录内容并推荐模式
@@ -775,9 +778,16 @@ def main():
     if md_stats.get("skipped"):
         log(f"跳过    : {md_stats['skipped']} 个 (模式过重，light已足够)")
 
+    # ── 步骤7：归档 PDF 到 MARKDOWN_DIR（双格式存档） ──
+    log("\n" + "=" * 50)
+    log("步骤7/9：归档 PDF 到存档目录")
+    log("=" * 50)
+    archived, archive_skipped = archive_pdfs()
+    log(f"归档完成: 拷贝 {archived} 个, 跳过 {archive_skipped} 个已存在")
+
     # ── 更新进度 ──
     log("\n" + "=" * 50)
-    log("步骤7/7：更新同步进度")
+    log("步骤8/9：更新同步进度")
     log("=" * 50)
 
     progress["last_sync_date"] = latest_date

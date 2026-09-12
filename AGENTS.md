@@ -23,8 +23,9 @@
 project-zhou/
 ├── .claude/CLAUDE.md             # 项目叙事 + 踩坑记录（旧位置，仍是事实记录主源）
 ├── scripts/
-│   ├── sync.py                   # 【主推】一键主控脚本，跑完所有 7 个步骤
+│   ├── sync.py                   # 【主推】一键主控脚本，跑完所有 9 个步骤
 │   ├── pdf_to_md.py              # PDF → Markdown 转换器（light/medium/full 三档）
+│   ├── archive_pdfs.py           # 独立：双格式存档 - 增量拷贝原版 PDF 到 MARKDOWN_DIR
 │   ├── fetch_jianguoyun.py       # 独立：抓取坚果云页面（旧版本，硬编码密码 `0403`）
 │   ├── parse_html.py             # 独立：从 HTML 提取条目（旧版本，依赖本地缓存路径）
 │   ├── download.py               # 独立：批量下载（接收命令行参数形式的上次日期）
@@ -39,6 +40,7 @@ project-zhou/
 
 **对外输出目录**（非本仓库内）：
 - Markdown 落盘到 `/Users/allenwywang/历史学习资料/历史学习/raw/articles/茶馆杂谈/`（脚本顶部 `MARKDOWN_DIR` 常量）。
+- 原版 PDF 也归档到同一目录（与 `.md` 同名并排），用于存档——保留原文版式/字体/图片；双格式约定详见 §4.7。
 - 质检报告 `_qc_report.json` 写在同一个输出目录。
 
 **关键配置文件**：本项目**没有** `pyproject.toml` / `requirements.txt` / `Pipfile`。依赖靠脚本里 `from ... import` 自描述：
@@ -63,21 +65,24 @@ project-zhou/
       │
       ├─▶ extract_archives()  ──7-zip ──▶ 多个子文件落到同目录
       ├─▶ rename_exe_to_pdf() ──读头 magic──▶ .exe → .pdf
-      └─▶ PdfConverter.convert_batch() ──pdfplumber + fitz ──▶ MARKDOWN_DIR
+      ├─▶ PdfConverter.convert_batch() ──pdfplumber + fitz ──▶ MARKDOWN_DIR (*.md)
+      └─▶ archive_pdfs() ──shutil.copy2──▶ MARKDOWN_DIR (*.pdf, 增量)
                                                        │
                                                        └─▶ _qc_report.json (质检报告)
 ```
 
-**步骤编号（用户可见）**：
+**步骤编号（用户可见）**（2026-08-24 整理，统一为 9 步）：
 1. 抓取坚果云（含密码自动重试 + 封禁保护）
 2. 解析条目
 3. 下载
 4. 解压
 5. 处理 `.exe` 伪装
 6. PDF → Markdown（含双引擎交叉质检）
-7. 更新 `progress.json`
+7. **归档 PDF 到 MARKDOWN_DIR（双格式存档）**
+8. 更新 `progress.json`
+9. 完整性验证（`verify_completeness`）
 
-注意：脚本日志横幅里写的"步骤 X/5"和"步骤 X/7"两种编号并存（早期遗留），不要被 "步骤 7/5" 的字符串迷惑。
+> 历史日志里如果出现 "步骤 X/5" 或 "步骤 X/7"，是 2026-08-24 之前的老编号——9 步制是从这次迭代起启用。
 
 ---
 
@@ -143,6 +148,19 @@ project-zhou/
 
 下载文件头检查必须用 `f.read(5)`——文件较大时按需读到内存，不要试图用 `head -c 5 file` 命令替换。
 
+### 4.7 双格式存档（2026-08-24 引入）
+
+`archive_pdfs()` 把 `茶馆杂谈文件同步/` 里所有 `.pdf` 增量拷贝到 `MARKDOWN_DIR`：
+
+- **MD 日常使用**（解析过的纯文本，可全文搜索、可被其他工具消费）
+- **原版 PDF 存档**（保留原文版式 / 字体 / 图片，方便回溯原文）
+- 同一目录并排：`xxx.md` + `xxx.pdf`
+- **已存在同名 `.pdf` 跳过**（不覆盖，保持幂等）——沿用 §4.4 的不覆盖原则
+- 不删 `DOWNLOAD_DIR` 里的源 PDF（工作区）和 `.zip` / `.exe` 残留
+- sync 流水线**步骤 7/9** 自动调用；可独立 `python archive_pdfs.py` 补跑历史
+
+**为什么不用 MD 重新渲染成 PDF 替代存档？** MD 转 PDF 排版会损失（字体替换、表格拆开、图片变占位等），原始 PDF 才有"存档"价值。
+
 ---
 
 ## 5. 构建与运行命令
@@ -155,7 +173,7 @@ python sync.py 0624             # 首次运行或强制指定起点
 python sync.py --headless       # 后台跑（隐藏浏览器窗口）
 ```
 
-行为：抓页 → 解析 → 下载 → 解压 → 重命名 → 转 MD → 更新 progress.json。
+行为：抓页 → 解析 → 下载 → 解压 → 重命名 → 转 MD → 归档 PDF → 更新 progress.json → 完整性验证。
 
 ### 5.2 分步调试（适合失败时排查）
 ```bash
@@ -164,6 +182,8 @@ python fetch_jianguoyun.py      # 只跑抓页面（密码 `0403`，独立硬编
 python parse_html.py            # 只解析 data/jianguoyun_page.html
 python download.py 0624         # 只下载（接受上次日期作为参数）
 python extract.py               # 只解压茶馆杂谈文件同步/ 下的全部压缩包
+python archive_pdfs.py          # 只归档原版 PDF 到 MARKDOWN_DIR（补跑历史或单独调试）
+python archive_pdfs.py --dry-run # dry-run：只显示待拷贝列表
 ```
 
 `pdf_to_md.py` 可以独立跑：
@@ -250,23 +270,26 @@ python pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 - **不要删除** `renamed = rename_exe_to_pdf()` 这一步——`pdf_to_md.py.convert_batch()` 只 glob `*.pdf`，没有它就少掉一批。
 - **不要移除** `channel="chrome"`——见 §7.5。
 - **不要**在 `progress.json.history` 的 entry 里增删字段名——下游人工复盘依赖稳定 schema。
-- **不要**绕过 `_file_matches_short_id()` 的前缀表（`{"JM": ["JM"], "WP": ["外篇","WP"], "python": ["python学习材料","python"]}`）——WP 和 python 的真实下载文件名跟条目名不一致，验证靠这张表对应。
+- **不要**绕过 `_file_matches_short_id()` 的前缀表（`{"JM": ["JM"], "WP": ["外篇","WP"], "python": ["python学习材料","ptyhon学习材料"]}`）——WP 和 python 的真实下载文件名跟条目名不一致，验证靠这张表对应。`ptyhon学习材料` 是 2026-08-24 加入的 python904 误拼变体（蓝奏云偶发返回的文件名拼写错误）。
+- **不要把** `archive_pdfs()` 改成覆盖已存在的同名 `.pdf`——存档是只追加（首次拷贝保留），覆盖会破坏 MD/PDF 配对的历史真相。
+- **不要**把 PDF 存档到独立子目录或另一根路径——双格式约定是同目录并排（`xxx.md` + `xxx.pdf`），改路径会让所有现有引用失效。
 
 ---
 
 ## 10. 版本/状态速览
 
 - 主推入口：`scripts/sync.py`
-- 最近一次同步：2026-07-21，0704~0721，14 条全成功（JM1089 首次下载失败后补跑成功；同日新增完整性验证步骤后补回 9 条历史遗漏）
-- 累计下载：56
-- 完整性验证：0526~0721 范围 56/56 完整、0 序列断号（JM/WP/python学习材料 三个系列）
+- 最近一次同步：2026-08-24，0805~0823，19 条全成功（python874 触发 QC-WARN，但 MD 已生成；python904 蓝奏云源文件名拼错 `ptyhon` 已加进前缀表）
+- 累计下载：91
+- 完整性验证：0526~0823 范围 90/90 完整、0 序列断号（JM/WP/python学习材料 三个系列）
+- 双格式存档（2026-08-24 启用）：MARKDOWN_DIR 共 90 个 `.pdf` + 1212 个 `.md`（含历史），增量不覆盖，幂等
 - Markdown 模式：当前只用 `light`（双引擎文本）；`medium` / `full` 是预留接口（TODO 接入 multidoc-transfer-multimodal）
 
 ## 11. 完整性验证（项目迭代，2026-07-21）
 
-`sync.py` 新增步骤 8：`verify_completeness()`。在 last_date ~ latest_date 范围内逐条检查：
+`sync.py` 新增步骤 9（2026-08-24 重编号前是步骤 8）：`verify_completeness()`。在 last_date ~ latest_date 范围内逐条检查：
 
-- **每条 4 状态**：`ok`（PDF + MD 都有）/ `needs_convert`（有 PDF 无 MD）/ `needs_unzip`（zip 未解压）/ `needs_rename`（.exe 未重命名）/ `missing`（什么都没）
+- **每条 5 状态**：`ok`（PDF + MD 都有）/ `needs_convert`（有 PDF 无 MD）/ `needs_unzip`（zip 未解压）/ `needs_rename`（.exe 未重命名）/ `missing`（什么都没）
 - **匹配逻辑**：`_file_matches_short_id()` 把条目短 ID（"JM1066"、"WP330"、"python873"）映射到下载产物的真实文件名前缀（"JM1066 <title>"、"外篇330"、"python学习材料873"）做模糊匹配
 - **序列断号**：`_detect_sequence_gaps()` 检测 JM / WP / python学习材料 三个系列的连续性，输出 `[1067, 1074, 1089]` 这种缺口数组
 - **报告落盘**：`data/completeness_report.json`（`{ anchor_date, latest_date, by_status, missing, needs_convert, needs_unzip, sequence_gaps }`）
