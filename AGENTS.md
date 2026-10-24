@@ -21,7 +21,7 @@
 
 ```
 project-zhou/
-├── .claude/CLAUDE.md             # 项目叙事 + 踩坑记录（旧位置，仍是事实记录主源）
+├── .claude/CLAUDE.md             # Claude 平台入口指针（2026-10-13 起瘦身为指针，不再承载项目事实；与本文冲突以本文为准）
 ├── scripts/
 │   ├── sync.py                   # 【主推】一键主控脚本，跑完所有 9 个步骤
 │   ├── pdf_to_md.py              # PDF → Markdown 转换器（light/medium/full 三档）
@@ -157,7 +157,7 @@ project-zhou/
 - 同一目录并排：`xxx.md` + `xxx.pdf`
 - **已存在同名 `.pdf` 跳过**（不覆盖，保持幂等）——沿用 §4.4 的不覆盖原则
 - 不删 `DOWNLOAD_DIR` 里的源 PDF（工作区）和 `.zip` / `.exe` 残留
-- sync 流水线**步骤 7/9** 自动调用；可独立 `python archive_pdfs.py` 补跑历史
+- sync 流水线**步骤 7/9** 自动调用；可独立 `python3 archive_pdfs.py` 补跑历史
 
 **为什么不用 MD 重新渲染成 PDF 替代存档？** MD 转 PDF 排版会损失（字体替换、表格拆开、图片变占位等），原始 PDF 才有"存档"价值。
 
@@ -168,32 +168,34 @@ project-zhou/
 ### 5.1 一键同步（默认推荐）
 ```bash
 cd scripts
-python sync.py                  # 自动从 progress.json 里的 last_sync_date 续跑
-python sync.py 0624             # 首次运行或强制指定起点
-python sync.py --headless       # 后台跑（隐藏浏览器窗口）
+python3 sync.py                  # 自动从 progress.json 里的 last_sync_date 续跑
+python3 sync.py 0624             # 首次运行或强制指定起点
+python3 sync.py --headless       # 后台跑（隐藏浏览器窗口）
 ```
 
 行为：抓页 → 解析 → 下载 → 解压 → 重命名 → 转 MD → 归档 PDF → 更新 progress.json → 完整性验证。
 
+> 本机没有 `python` 命令，全部脚本一律用 `python3`。
+
 ### 5.2 分步调试（适合失败时排查）
 ```bash
 cd scripts
-python fetch_jianguoyun.py      # 只跑抓页面（密码 `0403`，独立硬编码；仅做截屏/HTML 落盘）
-python parse_html.py            # 只解析 data/jianguoyun_page.html
-python download.py 0624         # 只下载（接受上次日期作为参数）
-python extract.py               # 只解压茶馆杂谈文件同步/ 下的全部压缩包
-python archive_pdfs.py          # 只归档原版 PDF 到 MARKDOWN_DIR（补跑历史或单独调试）
-python archive_pdfs.py --dry-run # dry-run：只显示待拷贝列表
+python3 fetch_jianguoyun.py      # 只跑抓页面（旧脚本，密码硬编码 `0403`，与现役 psw0528 不一致，跑它会抓不到；仅做截屏/HTML 落盘）
+python3 parse_html.py            # 只解析 data/jianguoyun_page.html
+python3 download.py 0624         # 只下载（接受上次日期作为参数）
+python3 extract.py               # 只解压茶馆杂谈文件同步/ 下的全部压缩包
+python3 archive_pdfs.py          # 只归档原版 PDF 到 MARKDOWN_DIR（补跑历史或单独调试）
+python3 archive_pdfs.py --dry-run # dry-run：只显示待拷贝列表
 ```
 
 `pdf_to_md.py` 可以独立跑：
 ```bash
 cd scripts
-python pdf_to_md.py                          # 默认 light 模式
-python pdf_to_md.py --mode light             # 显式轻量
-python pdf_to_md.py --auto                   # 自动扫描 + 推荐模式
-python pdf_to_md.py --mode medium            # 占位（当前降级到 light）
-python pdf_to_md.py --mode full              # 占位（当前降级到 light）
+python3 pdf_to_md.py                          # 默认 light 模式
+python3 pdf_to_md.py --mode light             # 显式轻量
+python3 pdf_to_md.py --auto                   # 自动扫描 + 推荐模式
+python3 pdf_to_md.py --mode medium            # 占位（当前降级到 light）
+python3 pdf_to_md.py --mode full              # 占位（当前降级到 light）
 ```
 
 ### 5.3 显式依赖
@@ -215,6 +217,7 @@ brew install p7zip               # 7z 命令，需用于 .rar / .7z 以及 zip f
    - 一边有文本一边没有 → `error`（漏提）。
    - 含图片 + 文本不足 50 字符 → `warn`（可疑图文混合）。
    - 纯图片页 → `error`（需要 OCR，未来 full 模式覆盖）。
+   - 空白末页降级（2026-10-24）：末页双引擎一致判空（无文本无图片）且其余页有内容 → `ok`（良性，实证 python874 源 PDF 自带空白尾页）；中间空白页仍 `warn`。
    - 结果落盘 `_qc_report.json`：`{ mode, stats, details }`。
 
 2. **离线复跑**——`progress.json` 充当"测试 fixture"。每次同步后增量记录历史，回看 `total_downloaded` / 历史 `count` 可以判断当次稳态。
@@ -222,8 +225,8 @@ brew install p7zip               # 7z 命令，需用于 .rar / .7z 以及 zip f
 **修改脚本时的最低验证**：
 ```bash
 cd scripts
-python -c "import extract, parse_html, fetch_jianguoyun, download, pdf_to_md, sync"
-python pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
+python3 -c "import extract, parse_html, fetch_jianguoyun, download, pdf_to_md, sync"
+python3 pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 ```
 
 ---
@@ -253,7 +256,7 @@ python pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 
 | 现象 | 优先检查 |
 |------|---------|
-| `sync.py` 报"未找到 XXXX 更新" | `progress.json` 的 `last_sync_date` 是否已经超过源文件最新条目；尝试 `python parse_html.py` 看实际解析到哪几条 |
+| `sync.py` 报"未找到 XXXX 更新" | `progress.json` 的 `last_sync_date` 是否已经超过源文件最新条目；尝试 `python3 parse_html.py` 看实际解析到哪几条 |
 | 下载按钮找不到 | 蓝奏云偶发改 selector；当前匹配 `a.btn, a[href*='down'], input.bott, a:has-text('下载')` 等多组。截 `assets/jianguoyun.png` 没必要——抓的是坚果云页；用 `page.content()` 诊断蓝奏云 DOM |
 | 所有 .exe 未被重命名 | 先挑一个 `head -c 5 file` 看真实 magic；如果不是 `%PDF-` 才跳过 |
 | `_qc_report.json` 显示大量 `pdfplumber 漏提` | 文件大或多列表格；切到 `--mode medium` 或 `--mode full`（当前都降级到 light；预留接口，等未来接入 multidoc-transfer-multimodal） |
@@ -279,10 +282,11 @@ python pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 ## 10. 版本/状态速览
 
 - 主推入口：`scripts/sync.py`
-- 最近一次同步：2026-09-12，0823~0911，20 条全成功，无新增 QC-WARN（python874 是 2026-08-24 历史遗留项）
-- 累计下载：111
-- 完整性验证：0823~0911 范围 20/20 完整、0 序列断号（JM/WP/python学习材料 三个系列）；历史 0526~0823 90/90 已在上次同步验证
-- 双格式存档：MARKDOWN_DIR 共 109 个 `.pdf` + 1231 个 `.md`（含历史），增量不覆盖，幂等
+- 最近一次同步：2026-10-24，1012~1022，11 条全完整（WP347 边界日首条走预检跳过）；QC-WARN 已清零——python874 于 2026-10-24 实证为源 PDF 自带空白尾页（双引擎一致判空），QC 规则同步降级，非数据缺陷
+- 累计下载：148
+- 完整性验证：1012~1022 范围 11/11 完整、0 序列断号（JM/WP/python学习材料 三个系列）；历史 0526~1012 128+18=146/146 已陆续验证
+- 双格式存档：MARKDOWN_DIR 共 146 个 `.pdf` + 1268 个 `.md`（含历史），增量不覆盖，幂等
+- **边界日重试瑕疵已根治（2026-10-24）**：`download_entries()` 增加 `[SKIP]` 文件存在性预检（复用 `_file_matches_short_id()` 短 ID 表），产物已存在的条目直接跳过、不再启动浏览器。此前 `sync.py` 会对边界日首条无条件重试下载并报 "Target page, context or browser has been closed"（2026-10-13 JM1125、2026-10-24 WP347 复现 2 次）。另：本机无 `python` 命令，一律用 `python3`。
 - Markdown 模式：当前只用 `light`（双引擎文本）；`medium` / `full` 是预留接口（TODO 接入 multidoc-transfer-multimodal）
 
 ## 11. 完整性验证（项目迭代，2026-07-21）
