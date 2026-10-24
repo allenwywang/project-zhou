@@ -3,21 +3,22 @@
 
 用法：
     cd scripts
-    python sync.py              # 默认从上次同步时点继续
-    python sync.py 0331         # 手动指定上次同步日期（首次运行）
-    python sync.py --headless   # 后台运行（不显示浏览器窗口）
+    python3 sync.py              # 默认从上次同步时点继续
+    python3 sync.py 0331         # 手动指定上次同步日期（首次运行）
+    python3 sync.py --headless   # 后台运行（不显示浏览器窗口）
 
-流程：
-    1. 读取 progress.json 获取上次同步日期
-    2. 抓取坚果云页面
-    3. 解析 HTML 提取所有条目
-    4. 从上次同步日期（最后一列最新位置）开始下载
-    5. 解压压缩包
-    6. 处理 .exe 伪装 PDF 文件
-    7. PDF → Markdown 转换（含图片检测和双引擎质检）
-    8. 归档 PDF 到 MARKDOWN_DIR（双格式存档：MD 日常用 + 原版 PDF 存档）
-    9. 更新 progress.json
-    10. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
+流程（步骤编号与运行时 log 一致）：
+    1. 抓取坚果云页面（含密码重试 + 封禁保护）
+    2. 解析 HTML 提取所有条目
+    3. 从上次同步日期（最后一列最新位置）开始下载
+    4. 解压压缩包
+    5. 处理 .exe 伪装 PDF 文件
+    6. PDF → Markdown 转换（含图片检测和双引擎质检）
+    7. 归档 PDF 到 MARKDOWN_DIR（双格式存档：MD 日常用 + 原版 PDF 存档）
+    8. 更新 progress.json
+    9. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
+
+注：本机没有 `python` 命令，一律用 `python3`。
 """
 
 import json
@@ -318,6 +319,29 @@ def download_entries(entries: list[dict]) -> tuple[int, int]:
     """批量下载条目，返回 (成功数, 失败数)"""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+    # 边界日预检（2026-10-24）：起点过滤用 >= 语义，边界日首条必然在上次同步已
+    # 下载过；无条件重试会触发 "Target page ... has been closed"（JM1125/WP347
+    # 已复现 2 次）。产物已存在的条目直接跳过，匹配逻辑复用 verify_completeness
+    # 的短 ID 前缀表（JM/WP/python 真实文件名与条目名不一致，见 §9 红线）。
+    existing_stems = {f.name for f in DOWNLOAD_DIR.iterdir()}
+    pending = []
+    for entry in entries:
+        name = entry["name"]
+        hit = any(
+            _file_matches_short_id(s[: -len(ext)], name)
+            for s in existing_stems
+            for ext in (".pdf", ".exe", ".zip")
+            if s.endswith(ext)
+        )
+        if hit:
+            log(f"[SKIP] 产物已存在，跳过下载: {entry['index']} {name}")
+        else:
+            pending.append(entry)
+
+    if not pending:
+        log("全部条目产物已存在，无需下载")
+        return 0, 0
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             channel="chrome",
@@ -328,7 +352,7 @@ def download_entries(entries: list[dict]) -> tuple[int, int]:
         page = context.new_page()
 
         success = failed = 0
-        for i, entry in enumerate(entries, 1):
+        for i, entry in enumerate(pending, 1):
             log(f"[{i}/{len(entries)}] {entry['index']} {entry['name']}")
             try:
                 if download_one(page, context, entry):

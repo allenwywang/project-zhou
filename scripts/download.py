@@ -7,7 +7,7 @@
   3. 这就自然定位到最后一列（因为最后一列在文件中位置最靠后）
   4. 文件名强制使用条目名称（避免蓝奏云返回的 UUID 乱码）
 
-用法：python download.py 0506
+用法：python3 download.py 0506
 """
 
 import re

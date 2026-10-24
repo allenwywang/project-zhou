@@ -5,8 +5,8 @@
 （保留原文版式 / 字体 / 图片，方便回溯；MD 转 PDF 排版会损失）。
 
 独立用法：
-    python archive_pdfs.py            # 增量拷贝（已存在同名 .pdf 跳过）
-    python archive_pdfs.py --dry-run  # 只显示，不复制
+    python3 archive_pdfs.py            # 增量拷贝（已存在同名 .pdf 跳过）
+    python3 archive_pdfs.py --dry-run  # 只显示，不复制
 
 被 sync.py 自动调用：sync 流水线的"步骤7/9"会调用 archive_pdfs()。
 

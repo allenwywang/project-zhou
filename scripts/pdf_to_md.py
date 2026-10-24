@@ -3,11 +3,11 @@ PDF → Markdown 转换器（支持多重量档）
 
 用法：
     cd scripts
-    python pdf_to_md.py                    # 默认 light 模式
-    python pdf_to_md.py --mode light       # 显式指定轻量模式
-    python pdf_to_md.py --mode medium      # 中等模式（预留接口）
-    python pdf_to_md.py --mode full        # 完整模式（预留接口）
-    python pdf_to_md.py --auto             # 自动检测并推荐模式
+    python3 pdf_to_md.py                    # 默认 light 模式
+    python3 pdf_to_md.py --mode light       # 显式指定轻量模式
+    python3 pdf_to_md.py --mode medium      # 中等模式（预留接口）
+    python3 pdf_to_md.py --mode full        # 完整模式（预留接口）
+    python3 pdf_to_md.py --auto             # 自动检测并推荐模式
 
 模式说明：
     light   — 双引擎文本提取（pdfplumber + PyMuPDF），适合纯文字PDF
@@ -250,8 +250,20 @@ class PdfConverter:
                 status = "error"
                 issues.append("页数不一致")
             elif pl_chars == 0 and fitz_chars == 0 and img_count == 0:
-                status = "warn"
-                issues.append("空白页（无文本无图片）")
+                # 2026-10-24 精细化：源 PDF 自带的空白尾页（实证 python874 第 3 页：
+                # 双引擎一致判空、无图片、仅背景线条）属良性，不算漏提。
+                # 仅当空白页位于末页且其余页有内容时降级；中间空白页仍 warn。
+                others_have_text = any(
+                    len((pl_pages[j] if j < len(pl_pages) else "").strip()) > 0
+                    or len((fitz_pages[j] if j < len(fitz_pages) else "").strip()) > 0
+                    for j in range(max_pages)
+                    if j != i
+                )
+                if i == max_pages - 1 and others_have_text:
+                    issues.append("末页空白（源 PDF 自带，双引擎一致判空，视为良性）")
+                else:
+                    status = "warn"
+                    issues.append("空白页（无文本无图片）")
             elif pl_chars == 0 and fitz_chars == 0 and img_count > 0:
                 status = "error"
                 issues.append(f"纯图片页: 含{img_count}张图片但无文本层（需要OCR或多维度分析）")
