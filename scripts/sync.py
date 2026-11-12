@@ -36,8 +36,9 @@ from playwright.sync_api import sync_playwright
 
 # 导入 PDF 转换器
 sys.path.insert(0, str(Path(__file__).parent))
-from pdf_to_md import PdfConverter, auto_detect_mode, JM_STEM_PAT
-from naming import build_from_entry, build_stem, parse_legacy, extract_jm_num
+from pdf_to_md import PdfConverter, auto_detect_mode
+from naming import (build_from_entry, build_stem, parse_legacy, extract_jm_num,
+                    is_jm_series)
 from archive_pdfs import archive_pdfs  # 归档：PDF 只进项目资料库（知识库只放 MD）
 
 # ── 配置（Mac 本地适配）──────────────────────────────────
@@ -668,7 +669,7 @@ def _check_entry_status(entry: dict, download_stems: set, md_stems: set) -> dict
 
     # 只有 JM 系列要求生成 Markdown；python/外篇/WP 只下载+归档，
     # 这些条目即便没有 .md 也不算 needs_convert（否则验证长期假阳性）。
-    if not JM_STEM_PAT.match(name):
+    if not is_jm_series(name):
         if pdf_hit:
             status = "ok"
         elif exe_hit:

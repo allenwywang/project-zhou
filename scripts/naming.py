@@ -20,7 +20,7 @@ EARLY_TAG = "JM早期文章"
 
 _NEW_RE = re.compile(r"^(\d{2})\.(\d{2})月-(JM\d+|" + EARLY_TAG + r")-(.+)$")
 _YM_PREFIX_RE = re.compile(r"^(\d{4})年(\d{2})月_(.+)$")
-_JM_PREFIX_RE = re.compile(r"^JM\s*(\d+)\s*(.*)$", re.IGNORECASE)
+_JM_PREFIX_RE = re.compile(r"^JM\s*[:：]?\s*(\d+)\s*(.*)$", re.IGNORECASE)
 _TRAIL_DATE_RE = re.compile(r"(\d{4})(\d{2})\d{2}$")
 _ILLEGAL_RE = re.compile(r'[\\/:*?"<>|]')
 
@@ -70,6 +70,25 @@ def extract_jm_num(name: str) -> Optional[int]:
 
 def is_early_article(name: str) -> bool:
     return bool(re.search(r"-" + EARLY_TAG + r"-", name))
+
+
+def is_jm_series(stem: str) -> bool:
+    """是否 JM 系列（含无编号的早期文章）。python / 外篇 / WP 不算。
+
+    同时认三种写法：
+    - 新命名 ``YY.MM月-JM123-标题`` / ``YY.MM月-JM早期文章-标题``
+    - 中间态 ``2021年01月_JM123 标题``
+    - 下载产物原名 ``JM123 标题``（旧名）
+    """
+    if is_non_jm(stem):
+        return False
+    if _NEW_RE.match(stem):
+        return True
+    m = _YM_PREFIX_RE.match(stem)
+    if m:
+        rest = m.group(3)
+        return bool(_JM_PREFIX_RE.match(rest)) or rest.startswith(EARLY_TAG)
+    return bool(_JM_PREFIX_RE.match(stem))
 
 
 def parse_legacy(stem: str) -> Optional[dict]:

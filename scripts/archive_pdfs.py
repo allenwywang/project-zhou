@@ -74,9 +74,10 @@ def classify_project_dest(filename: str, year: Optional[int] = None) -> Optional
     year 由新命名 ``YY.MM月-...`` 推出（发布年）；缺省时退回当前年。
     """
     stem = Path(filename).stem
-    if not _SERIES_PAT.match(stem):
+    is_jm = naming.is_jm_series(stem)
+    if not (is_jm or _SERIES_PAT.match(stem)):
         return None
-    if stem.startswith("JM"):
+    if is_jm:
         y = year or naming.year_of(stem) or datetime.now().year
         return LIBRARY_ROOT / (LEGACY_YEAR_DIR if y <= 2020 else f"历史学习资料-{y}")
     return LIBRARY_ROOT / "Python学习材料"

@@ -42,8 +42,8 @@ OUTPUT_DIR   = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆�
 QC_REPORT    = OUTPUT_DIR / "_qc_report.json"
 
 # 转换范围：只转 JM 系列。python学习材料 / ptyhon学习材料 / 外篇 / WP 照常下载与归档，
-# 但不做 PDF -> Markdown 转换。命名可能带冒号（如 "JM:1074"），故冒号可选。
-JM_STEM_PAT = re.compile(r"^JM:?\d")
+# 但不做 PDF -> Markdown 转换。判定统一走 naming.is_jm_series()（新命名
+# "YY.MM月-JM123-标题" / "YY.MM月-JM早期文章-标题" 与旧名都认）。
 
 # 质检阈值
 CHAR_DIFF_THRESHOLD = 0.15
@@ -100,7 +100,7 @@ class PdfConverter:
         if not HISTORY_KB_ROOT.is_dir():
             return {"error": f"历史学习知识库不存在: {HISTORY_KB_ROOT}"}
 
-        pdf_files = [p for p in all_pdfs if JM_STEM_PAT.match(p.stem)] if only_jm else all_pdfs
+        pdf_files = [p for p in all_pdfs if naming.is_jm_series(p.stem)] if only_jm else all_pdfs
         skipped_non_jm = len(all_pdfs) - len(pdf_files)
         if skipped_non_jm:
             print(f"[SKIP] 非 JM 系列 {skipped_non_jm} 个，不做 MD 转换（仍已归档）")
