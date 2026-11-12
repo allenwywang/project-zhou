@@ -935,6 +935,9 @@ def main():
         log(f"跳过    : {md_stats['skipped_non_jm']} 个非 JM 系列（只下载+归档，不转 MD）")
     if md_stats.get("skipped"):
         log(f"跳过    : {md_stats['skipped']} 个 (模式过重，light已足够)")
+    # 转换即排版（pdf_to_md.py 内建门禁，见 AGENTS.md §4.5）。
+    # failed 里可能含排版校验失败而拒绝落盘的文件，故单独打印通过数便于核对。
+    log(f"排版门禁: {md_stats.get('layout_ok', 0)} 个通过（校验失败不落盘）")
 
     # ── 步骤7：归档 PDF（只进项目资料库；知识库只放 MD） ──
     # archive_pdfs 返回的 (copied, skipped)：拷贝数 / 已存在跳过数。

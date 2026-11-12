@@ -3,16 +3,23 @@ PDF → Markdown 转换器（支持多重量档）
 
 用法：
     cd scripts
-    python3 pdf_to_md.py                    # 默认 light 模式
+    python3 pdf_to_md.py                    # 默认 light 模式（转换即排版）
     python3 pdf_to_md.py --mode light       # 显式指定轻量模式
     python3 pdf_to_md.py --mode medium      # 中等模式（预留接口）
     python3 pdf_to_md.py --mode full        # 完整模式（预留接口）
     python3 pdf_to_md.py --auto             # 自动检测并推荐模式
+    python3 pdf_to_md.py --no-format        # 调试用：跳过排版（正常同步不要用）
 
 模式说明：
     light   — 双引擎文本提取（pdfplumber + PyMuPDF），适合纯文字PDF
     medium  — 文本提取 + 基础视觉检查（图表/表格识别），适合图文混合
     full    — multidoc 全5层深度分析，适合复杂方案/PPT深度还原
+
+排版（2026-11-12 起内建，见 AGENTS.md §4.5）：
+    PDF 文本层按「页面物理行」导出，直接落盘会得到全篇无空行的硬切文本。
+    本转换器在 write_text 之前调用 md_layout.layout() 还原逻辑自然段，
+    并通过字符守恒 / 标题 / 空行 / 硬换行率下降四重校验；校验不通过
+    抛异常且不落盘（fail-close），避免无排版或掉字的 MD 进入知识库。
 """
 
 import argparse
@@ -23,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import naming  # 茶馆杂谈 JM 命名规则（唯一事实源）
+import md_layout  # 转换即排版：纯规则模块，与知识库侧由 test_md_layout.py 对齐
 
 try:
     import pdfplumber
@@ -61,10 +69,12 @@ class PdfConverter:
     """
     MODES = ["light", "medium", "full"]
 
-    def __init__(self, mode: str = "light"):
+    def __init__(self, mode: str = "light", do_format: bool = True):
         if mode not in self.MODES:
             raise ValueError(f"不支持的模式: {mode}，可选: {self.MODES}")
         self.mode = mode
+        # 转换即排版；--no-format 仅用于诊断，正常同步一律保持 True
+        self.do_format = do_format
 
     # ═══════════════════════════════════════════════════════
     #  公共接口
@@ -109,7 +119,8 @@ class PdfConverter:
             return {
                 "mode": self.mode,
                 "stats": {"total": 0, "passed": 0, "warn": 0, "failed": 0,
-                          "skipped": 0, "skipped_non_jm": skipped_non_jm},
+                          "skipped": 0, "skipped_non_jm": skipped_non_jm,
+                          "layout_ok": 0},
                 "details": [],
             }
 
@@ -125,7 +136,8 @@ class PdfConverter:
 
         results = []
         stats = {"total": 0, "passed": 0, "warn": 0, "failed": 0, "skipped": 0,
-                 "skipped_non_jm": skipped_non_jm, "skipped_exists": 0}
+                 "skipped_non_jm": skipped_non_jm, "skipped_exists": 0,
+                 "layout_ok": 0}
 
         for idx, pdf_path in enumerate(pdf_files, 1):
             print(f"[{idx:>3}/{len(pdf_files)}] {pdf_path.name}")
@@ -149,6 +161,8 @@ class PdfConverter:
             try:
                 md_path, qc = self.convert(pdf_path, output_dir, namer)
                 results.append(qc)
+                if qc.get("layout", {}).get("ok") is True:
+                    stats["layout_ok"] += 1
 
                 if qc.get("has_error"):
                     print(f"  [QC-ERROR] 发现严重差异！")
@@ -167,6 +181,7 @@ class PdfConverter:
 
         summary = {
             "mode": self.mode,
+            "rule_version": md_layout.RULE_VERSION,
             "stats": stats,
             "details": results,
         }
@@ -181,7 +196,7 @@ class PdfConverter:
 
     def _convert_light(self, pdf_path: Path, output_dir: Optional[Path] = None,
                        namer=None) -> tuple[Path, dict]:
-        """轻量模式：双引擎文本提取 + 交叉验证"""
+        """轻量模式：双引擎文本提取 + 交叉验证 + 内建排版"""
         title = pdf_path.stem.strip()
         md_stem = namer(pdf_path.stem) if namer else None
         md_filename = (md_stem or sanitize_filename(title)) + ".md"
@@ -205,8 +220,30 @@ class PdfConverter:
             fitz_len = len(fitz_text.strip())
             final_pages.append(fitz_text if fitz_len > pl_len * 1.2 else pl_text)
 
-        # 保存 Markdown
-        md_content = self._pages_to_markdown(title, final_pages)
+        # 生成原始（物理行）MD → 排版 → 门禁校验 → 才落盘
+        raw_md = self._pages_to_markdown(title, final_pages)
+        if self.do_format:
+            md_content, layout = md_layout.layout(raw_md, md_filename)
+            if not layout["ok"]:
+                # fail-close：绝不把未排版或掉字的 MD 写进知识库
+                raise RuntimeError(
+                    "[LAYOUT-FAIL] %s: %s" % (md_filename, "; ".join(layout["reasons"])))
+            # 物理行输入必然会被重排；完全一致说明排版链路被绕过。
+            # 例外：源 PDF 无文本层（正文为空）时 MD 只有头部，排版无事可做，
+            # 交回既有 QC 的「纯图片页」error 处理，不在这里误杀。
+            if md_content == raw_md and layout.get("src_chars", 0) > 0:
+                raise RuntimeError(
+                    "[LAYOUT-FAIL] %s: 排版未生效（输出与物理行原文一致）" % md_filename)
+            if layout.get("src_chars", 0) == 0:
+                print("  [WARN] 正文为空（源 PDF 无文本层），排版跳过生效检查")
+            print("  [OK] 排版校验通过: %d 段, 硬换行 %.2f -> %.2f"
+                  % (layout["paras"], layout["raw_hard_ratio"],
+                     layout["formatted_hard_ratio"]))
+        else:
+            md_content = raw_md
+            layout = {"ok": None, "skipped": True,
+                      "rule_version": md_layout.RULE_VERSION}
+            print("  [WARN] --no-format：跳过排版（仅调试用）")
         md_path.write_text(md_content, encoding="utf-8")
 
         qc = {
@@ -216,7 +253,9 @@ class PdfConverter:
             "total_images": sum(image_counts),
             "pl_total_chars": pl_total,
             "fitz_total_chars": fitz_total,
-            "final_total_chars": len(md_content),
+            "final_total_chars": len(raw_md),
+            "formatted_total_chars": len(md_content),
+            "layout": layout,
             "has_error": has_error,
             "has_warn": has_warn,
             "page_qc": page_qc,
@@ -346,6 +385,7 @@ class PdfConverter:
         return results
 
     def _pages_to_markdown(self, title: str, pages: list[str]) -> str:
+        """生成原始物理行 MD（排版在调用方 _convert_light 里做，此函数保持原样）。"""
         md_lines = [
             f"# {title}",
             "",
@@ -433,6 +473,8 @@ def main():
                         help="输入PDF目录")
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR,
                         help="输出Markdown目录")
+    parser.add_argument("--no-format", action="store_true",
+                        help="调试用：跳过内建排版（正常同步不要用，会退回无排版 MD）")
     args = parser.parse_args()
 
     mode = args.mode
@@ -441,10 +483,11 @@ def main():
         print(f"\n[推荐] 模式: {mode}\n")
 
     print(f"转换模式: {mode}")
+    print(f"排版规则: {'关闭(调试)' if args.no_format else md_layout.RULE_VERSION}")
     print(f"输入目录: {args.input}")
     print(f"输出目录: {args.output}\n")
 
-    converter = PdfConverter(mode=mode)
+    converter = PdfConverter(mode=mode, do_format=not args.no_format)
     summary = converter.convert_batch(args.input, args.output)
 
     print(f"\n{'=' * 50}")
@@ -455,6 +498,7 @@ def main():
     print(f"通过    : {stats.get('passed', 0)}")
     print(f"警告    : {stats.get('warn', 0)}")
     print(f"失败    : {stats.get('failed', 0)}")
+    print(f"排版通过: {stats.get('layout_ok', 0)}")
     if stats.get("skipped"):
         print(f"跳过    : {stats['skipped']} (模式过重，建议用 light)")
     print(f"\n质检报告: {args.output / '_qc_report.json'}")
