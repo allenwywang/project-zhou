@@ -6,7 +6,7 @@
 
 ## 一句话定位
 
-从坚果云共享页读取蓝奏云下载参数，批量下载 → 解压 → PDF 伪装识别 → 转 Markdown → 双格式存档，
+从坚果云共享页读取蓝奏云下载参数，批量下载 → 解压 → PDF 伪装识别 → 转 Markdown（知识库只放 MD）→ PDF 归档到项目资料库，
 约每半月人工触发一次。本机单人项目。
 
 ## 上手三步
@@ -19,6 +19,7 @@ python3 sync.py --headless # 后台跑
 ```
 
 > 本机没有 `python` 命令，一律 `python3`。
+> **AI 会话里要加前缀**：`env -u PYTHONPATH /usr/bin/python3`（宿主注入的 `sitecustomize` 会让 `mkdir` 伪报 EEXIST，且默认 `python3` 缺依赖）。详见 AGENTS.md §7.6。
 
 分步调试、依赖安装、质检方式见 **AGENTS.md §5 / §5.2 / §5.3 / §6**。
 修改脚本前必读 **AGENTS.md §4（关键约定）与 §9（修改红线）**。
@@ -39,5 +40,5 @@ python3 sync.py --headless # 后台跑
 | 坚果云密码 | `psw0528`，最多重试 3 次，超限直接 raise（AGENTS.md §4.3 / §7.1） |
 | `.exe` 伪装 | 文件头 `%PDF-` → 重命名为 `.pdf`，**绝不执行**（§4.4 / §7.2） |
 | 压缩包密码 | 文件名中所有数字拼接（§4.3） |
-| 双格式存档 | `MARKDOWN_DIR` 下 `.md` + `.pdf` 同名并排，增量不覆盖（§4.7） |
+| 存档分工 | 知识库 `MARKDOWN_DIR` 只放 `.md`；PDF 只进资料库年度目录，两侧同 stem（§4.7） |
 | 进度锚点 | `progress.json` 的 `last_sync_date` 是唯一同步状态（§4.2） |

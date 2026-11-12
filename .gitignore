@@ -4,6 +4,9 @@ assets/
 # 下载数据（PDF/zip），运行时生成不入仓
 茶馆杂谈文件同步/
 
+# 项目资料库（671MB 归档 PDF，只有唯一副本，靠外置盘备份，绝不入仓）
+周老师茶馆历史文档/
+
 # 进度和日志
 progress.json
 *.log
@@ -12,3 +15,6 @@ download_log.txt
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# Agent 工作区记忆（本机留存，不入仓）
+.workbuddy/
