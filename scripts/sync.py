@@ -13,8 +13,11 @@
     3. 从上次同步日期（最后一列最新位置）开始下载
     4. 解压压缩包
     5. 处理 .exe 伪装 PDF 文件
-    6. PDF → Markdown 转换（含图片检测和双引擎质检）
-    7. 归档 PDF 到 MARKDOWN_DIR（双格式存档：MD 日常用 + 原版 PDF 存档）
+    6. PDF → Markdown 转换（含图片检测和双引擎质检；仅 JM 系列，
+       python/外篇/WP 只下载+归档，不转 MD）
+    7. 归档 PDF（只进项目资料库，知识库只放 MD）：
+       JM -> 周老师茶馆历史文档/历史学习资料-YYYY（按发布年，<=2020 进 2020及以前），
+       python/外篇/WP -> 周老师茶馆历史文档/Python学习材料
     8. 更新 progress.json
     9. 完整性验证（检查 last_date~latest_date 范围内每个条目状态 + JM/WP/python 序列断号）
 
@@ -29,22 +32,30 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 
 # 导入 PDF 转换器
 sys.path.insert(0, str(Path(__file__).parent))
-from pdf_to_md import PdfConverter, auto_detect_mode
-from archive_pdfs import archive_pdfs  # 双格式存档：原版 PDF 归档到 MARKDOWN_DIR
+from pdf_to_md import PdfConverter, auto_detect_mode, JM_STEM_PAT
+from naming import build_from_entry, build_stem, parse_legacy, extract_jm_num
+from archive_pdfs import archive_pdfs  # 归档：PDF 只进项目资料库（知识库只放 MD）
 
 # ── 配置（Mac 本地适配）──────────────────────────────────
 PROJECT_ROOT    = Path(__file__).parent.parent
 PROGRESS_FILE   = PROJECT_ROOT / "progress.json"
 SOURCE_FILE     = Path.home() / "Downloads" / "特殊秘籍20240405.txt"
 DOWNLOAD_DIR    = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
-MARKDOWN_DIR    = Path("/Users/allenwywang/历史学习资料/历史学习/raw/articles/茶馆杂谈")
+# 历史学习知识库（独立 Obsidian 库，与 project-zhou 同级目录；
+# 2026-11-06 从 周老师茶馆历史文档/历史学习资料项目/ 迁出到这个位置）
+HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
+MARKDOWN_DIR    = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
 LANZOU_BASE_URL = "https://lanzoui.com/"
 SEVENZIP        = "7z"  # Homebrew p7zip 安装后的命令
 ARCHIVE_SUFFIXES = {".zip", ".rar", ".7z"}
+# 单次点击后等待 download 事件的时长。蓝奏云部分链接点击后会打开中转新页面，
+# download 事件挂在新页面上，必须给足中转时间；等待用 Playwright 方法泵事件循环。
+DOWNLOAD_WAIT_SECONDS = 60
+DOWNLOAD_WAIT_TICKS   = DOWNLOAD_WAIT_SECONDS * 2  # 每 tick 500ms
 # ─────────────────────────────────────────────────────────
 
 
@@ -226,8 +237,13 @@ def find_last_date_line(entries: list[dict], date_str: str) -> int:
 #  步骤3：下载新条目
 # ═════════════════════════════════════════════════════════
 
-def download_one(page, context, entry: dict) -> bool:
-    """下载单个条目，返回是否成功"""
+def download_one(page, context, entry: dict, sink: dict) -> bool:
+    """下载单个条目，返回是否成功。
+
+    sink = {"items": [...]}：由 download_entries() 在 context 上一次性注册
+    download 监听后传入。下载事件可能落在原页面，也可能落在点击后打开的
+    中转新页面，所以只点击一次，再统一等事件，不按页面分别 expect_download。
+    """
     url = LANZOU_BASE_URL + entry["file_id"]
     log(f"下载: {entry['name']} ({url})")
 
@@ -272,46 +288,44 @@ def download_one(page, context, entry: dict) -> bool:
         log(f"  [FAIL] 未找到下载按钮")
         return False
 
-    # 尝试直接下载
+    # 只点击一次 + 等 context 级 download 事件。
+    # 旧实现先在原 page expect_download 空等 60s，再二次点击；对「打开中转
+    # 新页面」的链接会必然失败（第二次点击时 context 已关闭）。
+    # 注意：Playwright 同步 API 的事件循环只在调用其方法时泵，time.sleep
+    # 不投递事件，必须用 wait_for_timeout 驱动，否则会出现「事件到达但
+    # 文件没保存、还误判成功」的假阳性。
+    sink["items"] = []
     try:
-        with page.expect_download(timeout=60000) as dl_info:
-            download_btn.click()
-        download = dl_info.value
+        download_btn.click()
+    except Exception as e:
+        log(f"  [FAIL] 下载按钮点击异常: {e}")
+        return False
+
+    for _ in range(DOWNLOAD_WAIT_TICKS):
+        if sink["items"]:
+            break
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            try:
+                context.pages[0].wait_for_timeout(500)
+            except Exception:
+                log("  [FAIL] 所有页面已关闭，无法继续等待下载")
+                break
+
+    if not sink["items"]:
+        log(f"  [FAIL] 等待下载事件超时（{DOWNLOAD_WAIT_SECONDS}s）")
+        return False
+
+    download = sink["items"][0]
+    try:
         save_name = download.suggested_filename or entry["name"]
         save_path = DOWNLOAD_DIR / save_name
         download.save_as(save_path)
         log(f"  [OK] 已保存: {save_name}")
         return True
-    except (PWTimeout, Exception):
-        pass
-
-    # 尝试新页面下载
-    try:
-        with context.expect_page(timeout=10000) as new_info:
-            download_btn.click()
-        new_page = new_info.value
-        new_page.wait_for_load_state("networkidle")
-        time.sleep(3)
-        real_btn = new_page.query_selector(
-            "a.btn, a.button, input.bott, "
-            "a:has-text('下载'), a:has-text('普通下载'), button:has-text('下载')"
-        )
-        if real_btn:
-            with new_page.expect_download(timeout=60000) as dl_info:
-                real_btn.click()
-            download = dl_info.value
-            save_name = download.suggested_filename or entry["name"]
-            save_path = DOWNLOAD_DIR / save_name
-            download.save_as(save_path)
-            log(f"  [OK] 已保存: {save_name}")
-            new_page.close()
-            return True
-        else:
-            log(f"  [FAIL] 新页面中未找到下载按钮")
-            new_page.close()
-            return False
     except Exception as e:
-        log(f"  [FAIL] 下载异常: {e}")
+        log(f"  [FAIL] 保存下载文件异常: {e}")
         return False
 
 
@@ -320,8 +334,9 @@ def download_entries(entries: list[dict]) -> tuple[int, int]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     # 边界日预检（2026-10-24）：起点过滤用 >= 语义，边界日首条必然在上次同步已
-    # 下载过；无条件重试会触发 "Target page ... has been closed"（JM1125/WP347
-    # 已复现 2 次）。产物已存在的条目直接跳过，匹配逻辑复用 verify_completeness
+    # 下载过；无条件重试会重复点击下载按钮，早期实现会抛
+    # "Target page ... has been closed"（JM1125/WP347 已复现 2 次）。
+    # 产物已存在的条目直接跳过，匹配逻辑复用 verify_completeness
     # 的短 ID 前缀表（JM/WP/python 真实文件名与条目名不一致，见 §9 红线）。
     existing_stems = {f.name for f in DOWNLOAD_DIR.iterdir()}
     pending = []
@@ -349,13 +364,24 @@ def download_entries(entries: list[dict]) -> tuple[int, int]:
             downloads_path=str(DOWNLOAD_DIR),
         )
         context = browser.new_context(accept_downloads=True)
+
+        # context 级 download 监听：事件可能发生在原页面，也可能落在点击后
+        # 打开的蓝奏云中转新页面。已有页面和未来新页面都挂上，避免按页面
+        # 分别 expect_download 时漏掉新页面上的事件。
+        sink = {"items": []}
+        def _hook(pg):
+            pg.on("download", lambda d: sink["items"].append(d))
+        context.on("page", _hook)
+        for pg in context.pages:
+            _hook(pg)
         page = context.new_page()
+        _hook(page)
 
         success = failed = 0
         for i, entry in enumerate(pending, 1):
-            log(f"[{i}/{len(entries)}] {entry['index']} {entry['name']}")
+            log(f"[{i}/{len(pending)}] {entry['index']} {entry['name']}")
             try:
-                if download_one(page, context, entry):
+                if download_one(page, context, entry, sink):
                     success += 1
                 else:
                     failed += 1
@@ -502,11 +528,104 @@ def _entry_short_id(entry_name: str) -> tuple[str, str]:
     return (prefix, m.group(2))
 
 
+_ENTRY_DATE_RE = re.compile(r"^(\d{2})(\d{2})更新$")
+
+
+def build_entry_dates(entries: list[dict], latest_year: int = None) -> dict[int, tuple]:
+    """按页面顺序重建每个条目的发布日期，返回 {entries 下标: (year, month, day)}。
+
+    坚果云页面是「旧 -> 新」的累计清单（一份页面跨 5 年），跨年处 MMDD 回绕；
+    以**末条（最新）**所在年份为锚，逐条倒推。绝对不能按「当前年 + 条目月份」
+    直接推，否则历史条目会被推到错误的年份（2026-11 曾因此把 JM1 标成 2021-01）。
+
+    非法日期（如页面上的 ``0145更新``）返回 None，由调用方跳过。
+    """
+    parsed = []
+    for e in entries:
+        m = _ENTRY_DATE_RE.match((e.get("index") or "").strip())
+        mm, dd = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        parsed.append((mm, dd) if 1 <= mm <= 12 and 1 <= dd <= 31 else None)
+
+    valid = [p for p in parsed if p]
+    if not valid:
+        return {}
+    # 方向判断：正向回绕次数 ≈ 跨年数；若过多说明页面是「新 -> 旧」
+    wraps = sum(1 for i in range(1, len(parsed))
+                if parsed[i] and parsed[i - 1] and parsed[i] < parsed[i - 1])
+    order = list(range(len(parsed)))
+    if wraps > len(valid) / 4:
+        order.reverse()
+
+    base_year = latest_year or datetime.now().year
+    last = parsed[order[-1]]
+    if last and last[0] > datetime.now().month + 1:
+        base_year -= 1          # 末条是 12 月而当前是 1 月
+
+    out = {}
+    year, prev = base_year, None
+    for i in reversed(order):   # 新 -> 旧
+        d = parsed[i]
+        if d is None:
+            out[i] = None
+            continue
+        if prev is not None and d[0] > prev[0]:
+            year -= 1           # 往回走月份变大 => 跨到上一年
+        prev = d
+        out[i] = (year, d[0], d[1])
+    return out
+
+
+def _make_jm_namer(entries: list[dict]):
+    """构造 JM 命名器：pdf_stem -> ``YY.MM月-JMxxx-标题``。
+
+    日期取坚果云条目日期（见 build_entry_dates），并以 **JM 编号顺序为第一优先级**
+    做单调约束：编号递增时年月不得倒退（编号才是发布顺序的事实源）。
+    非 JM 或编号不在本批条目内时返回 None，调用方沿用原名。
+    """
+    dates = build_entry_dates(entries)
+    by_num = {}
+    for i, e in enumerate(entries):
+        num = extract_jm_num(e["name"])
+        d = dates.get(i)
+        if num is not None and d and num not in by_num:
+            by_num[num] = d[:2]        # 同编号取最早出现
+
+    # 单调化：编号递增 => 年月不减
+    last = None
+    for num in sorted(by_num):
+        y, m = by_num[num]
+        if last is not None and (y, m) < last:
+            log(f"[WARN] JM{num} 条目日期 {y}-{m:02d} 早于前一号 {last[0]}-{last[1]:02d}，按编号顺序修正")
+            by_num[num] = last
+        last = by_num[num]
+
+    def namer(pdf_stem: str):
+        num = extract_jm_num(pdf_stem)
+        if num is None or num not in by_num:
+            return None
+        parsed = parse_legacy(pdf_stem)
+        title = (parsed["title"] if parsed else "") or ""
+        y, m = by_num[num]
+        try:
+            return build_stem(y, m, num, title)
+        except Exception:
+            return None
+
+    return namer
+
+
 def _file_matches_short_id(file_stem: str, entry_name: str) -> bool:
-    """判断 file_stem（无扩展名的文件名）是否属于 entry_name 对应的下载产物"""
+    """判断 file_stem（无扩展名的文件名）是否属于 entry_name 对应的下载产物。
+
+    兼容两套 JM 命名：
+      - 下载目录原名 ``JM1140 小弟与帮派``
+      - 知识库新名 ``26.10月-JM1140-小弟与帮派``（2026-11-12 起）
+    """
     prefix, num = _entry_short_id(entry_name)
     if not num:
         return file_stem.startswith(entry_name)
+    if prefix == "JM" and re.search(rf"-JM{num}-", file_stem):
+        return True
     # 不同系列对应的实际文件名前缀
     real_prefixes = {
         "JM": ["JM"],
@@ -547,7 +666,18 @@ def _check_entry_status(entry: dict, download_stems: set, md_stems: set) -> dict
     zip_hit = find_match(download_stems, ".zip")
     md_hit = find_match(md_stems, ".md")
 
-    if pdf_hit and md_hit:
+    # 只有 JM 系列要求生成 Markdown；python/外篇/WP 只下载+归档，
+    # 这些条目即便没有 .md 也不算 needs_convert（否则验证长期假阳性）。
+    if not JM_STEM_PAT.match(name):
+        if pdf_hit:
+            status = "ok"
+        elif exe_hit:
+            status = "needs_rename"
+        elif zip_hit:
+            status = "needs_unzip"
+        else:
+            status = "missing"
+    elif pdf_hit and md_hit:
         status = "ok"
     elif pdf_hit and not md_hit:
         status = "needs_convert"
@@ -795,31 +925,41 @@ def main():
     md_mode = auto_detect_mode(DOWNLOAD_DIR)
     log(f"转换模式: {md_mode}")
 
+    jm_namer = _make_jm_namer(new_entries)
     md_converter = PdfConverter(mode=md_mode)
-    md_summary = md_converter.convert_batch(DOWNLOAD_DIR, MARKDOWN_DIR)
+    md_summary = md_converter.convert_batch(DOWNLOAD_DIR, MARKDOWN_DIR, namer=jm_namer)
     md_stats = md_summary.get("stats", {})
     log(f"转换完成: 成功 {md_stats.get('passed', 0)} 个, 警告 {md_stats.get('warn', 0)} 个, 失败 {md_stats.get('failed', 0)} 个")
+    if md_stats.get("skipped_non_jm"):
+        log(f"跳过    : {md_stats['skipped_non_jm']} 个非 JM 系列（只下载+归档，不转 MD）")
     if md_stats.get("skipped"):
         log(f"跳过    : {md_stats['skipped']} 个 (模式过重，light已足够)")
 
-    # ── 步骤7：归档 PDF 到 MARKDOWN_DIR（双格式存档） ──
+    # ── 步骤7：归档 PDF（只进项目资料库；知识库只放 MD） ──
+    # archive_pdfs 返回的 (copied, skipped)：拷贝数 / 已存在跳过数。
     log("\n" + "=" * 50)
-    log("步骤7/9：归档 PDF 到存档目录")
+    log("步骤7/9：归档 PDF 到项目资料库（知识库只放 MD）")
     log("=" * 50)
-    archived, archive_skipped = archive_pdfs()
-    log(f"归档完成: 拷贝 {archived} 个, 跳过 {archive_skipped} 个已存在")
+    archived, archive_skipped = archive_pdfs(namer=jm_namer)
+    log(f"归档完成(所有目的地合计): 拷贝 {archived} 个, 跳过 {archive_skipped} 个已存在")
 
     # ── 更新进度 ──
     log("\n" + "=" * 50)
     log("步骤8/9：更新同步进度")
     log("=" * 50)
 
-    progress["last_sync_date"] = latest_date
-    progress["last_sync_full_date"] = today
-    progress["last_sync_range"] = f"{last_date}~{latest_date}"
-    progress["last_sync_count"] = len(new_entries)
+    # 进度锚点只在本次全部下载成功时推进。有失败条目时保持原锚点，
+    # 下次运行的 [SKIP] 预检会跳过已落地产物，只重试失败条目；
+    # 若仍推进到 latest_date，失败条目将被永久跳过（只能靠步骤9兜底）。
+    # 注意：history entry 字段固定，失败信息只能写进既有的 note 字段（§9 红线）。
+    anchor_date = latest_date if dl_failed == 0 else progress.get("last_sync_date", last_date)
+    if dl_failed == 0:
+        progress["last_sync_date"] = latest_date
+        progress["last_sync_full_date"] = today
+        progress["last_sync_range"] = f"{last_date}~{latest_date}"
+        progress["last_sync_count"] = len(new_entries)
     progress["total_downloaded"] = progress.get("total_downloaded", 0) + dl_success
-    progress["history"] = progress.get("history", []) + [{
+    record = {
         "date": today,
         "range": f"{last_date}~{latest_date}",
         "count": len(new_entries),
@@ -827,7 +967,13 @@ def main():
         "extracted": ex_success,
         "renamed": renamed,
         "converted": md_stats.get("passed", 0),
-    }]
+    }
+    if dl_failed:
+        record["note"] = (
+            f"下载失败 {dl_failed} 个，进度锚点保持 {anchor_date}；"
+            "下次同步由 [SKIP] 预检只重试失败条目"
+        )
+    progress["history"] = progress.get("history", []) + [record]
     save_progress(progress)
 
     # ── 完成报告 ──
@@ -840,7 +986,9 @@ def main():
     log(f"重命名  : {renamed} 个 (exe->pdf)")
     log(f"Markdown: {md_stats.get('passed', 0)} 个 (模式: {md_mode})")
     log(f"最新时点: {latest_date}")
-    log(f"下次运行将自动从 {latest_date} 继续")
+    if dl_failed:
+        log(f"[WARN] 本次有 {dl_failed} 个条目下载失败，进度锚点未推进（仍为 {anchor_date}）")
+    log(f"下次运行将自动从 {anchor_date} 继续")
     log("=" * 50)
 
     # ── 步骤8：完整性验证 ──

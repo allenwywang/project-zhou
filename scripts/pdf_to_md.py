@@ -20,6 +20,9 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Optional
+
+import naming  # 茶馆杂谈 JM 命名规则（唯一事实源）
 
 try:
     import pdfplumber
@@ -30,9 +33,17 @@ except ImportError as e:
     raise SystemExit(1)
 
 # ── 配置（Mac 本地适配）──────────────────────────────────
+PROJECT_ROOT = Path(__file__).parent.parent
 DOWNLOAD_DIR = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂谈文件同步")
-OUTPUT_DIR   = Path("/Users/allenwywang/历史学习资料/历史学习/raw/articles/茶馆杂谈")
+# 历史学习知识库（独立 Obsidian 库，与 project-zhou 同级目录；
+# 2026-11-06 从 周老师茶馆历史文档/历史学习资料项目/ 迁出到这个位置）
+HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
+OUTPUT_DIR   = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
 QC_REPORT    = OUTPUT_DIR / "_qc_report.json"
+
+# 转换范围：只转 JM 系列。python学习材料 / ptyhon学习材料 / 外篇 / WP 照常下载与归档，
+# 但不做 PDF -> Markdown 转换。命名可能带冒号（如 "JM:1074"），故冒号可选。
+JM_STEM_PAT = re.compile(r"^JM:?\d")
 
 # 质检阈值
 CHAR_DIFF_THRESHOLD = 0.15
@@ -59,32 +70,72 @@ class PdfConverter:
     #  公共接口
     # ═══════════════════════════════════════════════════════
 
-    def convert(self, pdf_path: Path) -> tuple[Path, dict]:
+    def convert(self, pdf_path: Path, output_dir: Optional[Path] = None,
+                namer=None) -> tuple[Path, dict]:
         """
         转换单个PDF，返回 (md_path, qc_result)
+
+        output_dir 为 MD 落盘目录；省略则用模块级 OUTPUT_DIR。
+        namer(pdf_stem) -> 新 MD stem（``YY.MM月-JMxxx-标题``）；省略/None 时用原名。
         """
         if self.mode == "light":
-            return self._convert_light(pdf_path)
+            return self._convert_light(pdf_path, output_dir, namer)
         elif self.mode == "medium":
-            return self._convert_medium(pdf_path)
+            return self._convert_medium(pdf_path, output_dir, namer)
         elif self.mode == "full":
-            return self._convert_full(pdf_path)
+            return self._convert_full(pdf_path, output_dir, namer)
 
-    def convert_batch(self, pdf_dir: Path, output_dir: Path) -> dict:
+    def convert_batch(self, pdf_dir: Path, output_dir: Path,
+                      only_jm: bool = True, namer=None) -> dict:
         """
-        批量转换目录下所有PDF，返回汇总报告
+        批量转换目录下PDF，返回汇总报告。
+
+        only_jm=True（默认）：只转换 JM 系列。python学习材料 / ptyhon学习材料 /
+        外篇 / WP 系列仍会被下载和归档，但不生成 Markdown。
         """
-        pdf_files = sorted(pdf_dir.glob("*.pdf"))
-        if not pdf_files:
+        all_pdfs = sorted(pdf_dir.glob("*.pdf"))
+        if not all_pdfs:
             return {"error": f"目录中没有PDF文件: {pdf_dir}"}
+        # 防御：知识库根缺失时报错，避免 mkdir 静默建出空目录
+        if not HISTORY_KB_ROOT.is_dir():
+            return {"error": f"历史学习知识库不存在: {HISTORY_KB_ROOT}"}
+
+        pdf_files = [p for p in all_pdfs if JM_STEM_PAT.match(p.stem)] if only_jm else all_pdfs
+        skipped_non_jm = len(all_pdfs) - len(pdf_files)
+        if skipped_non_jm:
+            print(f"[SKIP] 非 JM 系列 {skipped_non_jm} 个，不做 MD 转换（仍已归档）")
+        if not pdf_files:
+            print("[INFO] 没有可转换的 JM 系列 PDF，跳过")
+            return {
+                "mode": self.mode,
+                "stats": {"total": 0, "passed": 0, "warn": 0, "failed": 0,
+                          "skipped": 0, "skipped_non_jm": skipped_non_jm},
+                "details": [],
+            }
 
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 按 JM 编号预扫已存在的 MD（新命名不带 JM 前缀，不能用文件名直接比对），
+        # 已转换过的历史文件直接跳过，避免每次同步重复生成一份。
+        existing_nums = set()
+        for p in output_dir.glob("*.md"):
+            num = naming.extract_jm_num(p.stem)
+            if num is not None:
+                existing_nums.add(num)
+
         results = []
-        stats = {"total": 0, "passed": 0, "warn": 0, "failed": 0, "skipped": 0}
+        stats = {"total": 0, "passed": 0, "warn": 0, "failed": 0, "skipped": 0,
+                 "skipped_non_jm": skipped_non_jm, "skipped_exists": 0}
 
         for idx, pdf_path in enumerate(pdf_files, 1):
             print(f"[{idx:>3}/{len(pdf_files)}] {pdf_path.name}")
             stats["total"] += 1
+
+            # 该 JM 编号已存在于知识库（新命名）→ 跳过，避免重复转换
+            jm_num = naming.extract_jm_num(pdf_path.stem)
+            if jm_num is not None and jm_num in existing_nums:
+                stats["skipped_exists"] += 1
+                continue
 
             # 自动检测：如果非 light 模式且文件是纯文字，降级提示
             if self.mode in ("medium", "full"):
@@ -96,7 +147,7 @@ class PdfConverter:
                     continue
 
             try:
-                md_path, qc = self.convert(pdf_path)
+                md_path, qc = self.convert(pdf_path, output_dir, namer)
                 results.append(qc)
 
                 if qc.get("has_error"):
@@ -119,18 +170,22 @@ class PdfConverter:
             "stats": stats,
             "details": results,
         }
-        QC_REPORT.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        # 质检报告跟输出目录走（与 MD 同目录），不再写死模块级 QC_REPORT
+        qc_path = (output_dir or OUTPUT_DIR) / "_qc_report.json"
+        qc_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         return summary
 
     # ═══════════════════════════════════════════════════════
     #  模式：light（双引擎文本提取）
     # ═══════════════════════════════════════════════════════
 
-    def _convert_light(self, pdf_path: Path) -> tuple[Path, dict]:
+    def _convert_light(self, pdf_path: Path, output_dir: Optional[Path] = None,
+                       namer=None) -> tuple[Path, dict]:
         """轻量模式：双引擎文本提取 + 交叉验证"""
         title = pdf_path.stem.strip()
-        md_filename = sanitize_filename(title) + ".md"
-        md_path = OUTPUT_DIR / md_filename
+        md_stem = namer(pdf_path.stem) if namer else None
+        md_filename = (md_stem or sanitize_filename(title)) + ".md"
+        md_path = (output_dir or OUTPUT_DIR) / md_filename
 
         # 双引擎提取
         pl_pages, pl_total = self._extract_pdfplumber(pdf_path)
@@ -172,7 +227,8 @@ class PdfConverter:
     #  模式：medium（预留接口）
     # ═══════════════════════════════════════════════════════
 
-    def _convert_medium(self, pdf_path: Path) -> tuple[Path, dict]:
+    def _convert_medium(self, pdf_path: Path, output_dir: Optional[Path] = None,
+                        namer=None) -> tuple[Path, dict]:
         """
         中等模式：文本提取 + 基础视觉检查（图表/表格识别）
         预留接口 — 未来接入 multidoc 文本通道 + 图表/表格还原
@@ -180,7 +236,7 @@ class PdfConverter:
         # TODO: 接入 multidoc 的文本通道 + 基础视觉层（Layer 1 + Layer 4 轻量版）
         # 当前降级到 light 并提示
         print(f"  [INFO] medium 模式预留中，当前降级到 light")
-        md_path, qc = self._convert_light(pdf_path)
+        md_path, qc = self._convert_light(pdf_path, output_dir, namer)
         qc["mode"] = "medium (fallback to light)"
         return md_path, qc
 
@@ -188,7 +244,8 @@ class PdfConverter:
     #  模式：full（预留接口）
     # ═══════════════════════════════════════════════════════
 
-    def _convert_full(self, pdf_path: Path) -> tuple[Path, dict]:
+    def _convert_full(self, pdf_path: Path, output_dir: Optional[Path] = None,
+                      namer=None) -> tuple[Path, dict]:
         """
         完整模式：multidoc 全5层深度分析
         预留接口 — 未来接入 multidoc-transfer-multimodal 技能
@@ -196,7 +253,7 @@ class PdfConverter:
         # TODO: 调用 multidoc-transfer-multimodal 技能进行深度分析
         # 当前降级到 light 并提示
         print(f"  [INFO] full 模式预留中，当前降级到 light")
-        md_path, qc = self._convert_light(pdf_path)
+        md_path, qc = self._convert_light(pdf_path, output_dir, namer)
         qc["mode"] = "full (fallback to light)"
         return md_path, qc
 
@@ -400,7 +457,7 @@ def main():
     print(f"失败    : {stats.get('failed', 0)}")
     if stats.get("skipped"):
         print(f"跳过    : {stats['skipped']} (模式过重，建议用 light)")
-    print(f"\n质检报告: {QC_REPORT}")
+    print(f"\n质检报告: {args.output / '_qc_report.json'}")
 
 
 if __name__ == "__main__":
