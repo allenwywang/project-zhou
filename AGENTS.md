@@ -2,7 +2,7 @@
 
 本文件为 AI 编程代理提供项目背景知识，读者对项目一无所知。**事实以代码为准**，本文须与代码现状同步。
 
-> **体量预算**：Codex 项目指令链按 32KiB 合并截断（本文件 26.7KB + 全局 `~/.codex/AGENTS.md` 5.2KB ≈ 31.9KB，余量 <1KB）。**新增内容前先删等量的旧内容**，否则末尾 §9 红线会被静默截断。
+> **体量预算**：Codex 项目指令链按 32KiB 合并截断（本文件 26.9KB + 全局 `~/.codex/AGENTS.md` 5.1KB ≈ 32.0KB，余量 <1KB）。**新增内容前先删等量的旧内容**，否则末尾 §9 红线会被静默截断。
 
 ---
 
@@ -26,7 +26,9 @@ project-zhou/
 ├── .claude/CLAUDE.md           # Claude 入口指针，不承载事实；冲突以本文为准
 ├── scripts/
 │   ├── sync.py                 # 【主推】一键主控，跑完 9 步
-│   ├── pdf_to_md.py            # PDF → Markdown（light/medium/full）
+│   ├── pdf_to_md.py            # PDF → Markdown（light/medium/full）+ 内建排版门禁（§4.5）
+│   ├── md_layout.py            # 排版规则纯函数（转换器侧实现，§4.5）
+│   ├── test_md_layout.py       # 排版回归测试：双份一致性 + fail-close 门禁（§6）
 │   ├── naming.py               # JM 命名唯一事实源（§4.7）
 │   ├── audit_dates.py          # 日期/编号审计（同步后跑，非 0 退出需处理）
 │   ├── archive_pdfs.py         # PDF 归档：只进资料库（§4.7）
@@ -40,13 +42,11 @@ project-zhou/
 └── 周老师茶馆历史文档/          # 【项目资料库】PDF 分类归档目标（§4.7）；671MB 且是唯一副本，gitignore 不入仓
 ```
 
-**对外输出目录**（不在本仓库内）：
-- Markdown + `_qc_report.json` → `/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/`（脚本常量 `MARKDOWN_DIR`；2026-11-06 从旧路径 `/Users/allenwywang/历史学习资料/...` 迁来）。**这里只放 `.md`，不放 PDF**（2026-11-12 起）；PDF 只在项目资料库。
-- 该目录**只收 JM 系列**（2026-11-12 起）：python / 外篇 / WP 仍下载并归档项目资料库，但不再进这里。JM 文件名统一为 `YY.MM月-JMxxx-标题`（§4.7）。
-- PDF 分类归档副本 → 仓库内 `周老师茶馆历史文档/`。
-- 外置盘备份 → `/Volumes/My PSSD/文档资料/project-zhou`（对应本机资料库根目录，**不是仓库镜像**，§4.8）。
+**对外输出**（不在仓库内）：
+- Markdown + `_qc_report.json` → `/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/`（常量 `MARKDOWN_DIR`）。**只放 `.md` 不放 PDF**，**只收 JM 系列**（python/外篇/WP 只归档资料库），文件名 `YY.MM月-JMxxx-标题`（§4.7）。
+- PDF 归档副本 → 仓库内 `周老师茶馆历史文档/`；外置盘备份 → `/Volumes/My PSSD/文档资料/project-zhou`（对应资料库根目录，**不是仓库镜像**，§4.8）。
 
-**依赖**：没有 `pyproject.toml` / `requirements.txt`，靠脚本 `import` 自描述：`playwright`（同步 API，配本机 Chrome）、`pdfplumber`、`PyMuPDF`（`fitz`）、系统命令 `7z`（Homebrew `p7zip`）。
+**依赖**：无 `pyproject.toml` / `requirements.txt`，靠脚本 `import` 自描述：`playwright`（配本机 Chrome）、`pdfplumber`、`PyMuPDF`（`fitz`）、`7z`（Homebrew `p7zip`）。
 
 ---
 
@@ -64,9 +64,6 @@ project-zhou/
       └─ archive_pdfs() ─copy2─▶ 周老师茶馆历史文档/（按发布年入年度目录，新命名，增量）
                           【单目的地：知识库不收 PDF】
 ```
-
-**9 步流水线**（用户可见编号，与运行时 log 一致）：
-1 抓取坚果云（含密码重试与封禁保护）→ 2 解析条目 → 3 下载 → 4 解压 → 5 处理 `.exe` 伪装 → 6 PDF→Markdown（双引擎质检）→ 7 归档 PDF（只进资料库）→ 8 更新 `progress.json` → 9 完整性验证 `verify_completeness()`。
 
 ---
 
@@ -116,6 +113,13 @@ project-zhou/
 ---
 ```
 
+**正文排版（2026-11-12 起，转换即排版）**：
+- 规则在 `scripts/md_layout.py`（`format_markdown` / `verify` / `layout`）：行尾无终止标点则与下一行拼接，有终止标点则断段；空行密集（OCR/已排版型）时原空行即段落边界。
+- `pdf_to_md.py::_convert_light` 在 `write_text()` **之前**调 `md_layout.layout()`。门禁四项（字符守恒 / 有 H1 / 无三连空行 / 物理行不得原样输出）**失败抛 `[LAYOUT-FAIL]` 不落盘**（fail-close）。
+- 知识库侧另有 `scripts/format_chaguan_md.py`，两份规则由 `test_md_layout.py` 逐例比对，`RULE_VERSION` 必须一致；**改规则两侧同步 + bump 版本号**。
+- `--no-format` 仅供诊断。增强标记（`##` / `>`）是人工语义判断，不纳入自动转换；无 JM 编号的早期文章每次同步会被重转覆盖（详见 §5.5）。
+- **语义层面的复查判据（六类缺陷 / 硬红线 / 判定速查表）见 §5.5 指向的 skill**。
+
 ### 4.6 下载预检
 
 `download_entries()` 先做 `[SKIP]` 存在性预检：复用 `_file_matches_short_id()` 短 ID 表匹配 `DOWNLOAD_DIR` 里已有的 `.pdf` / `.exe` / `.zip`，产物已存在的条目直接跳过、**不再启动浏览器**。这是边界日不重复下载的保障，不要绕过。
@@ -139,22 +143,17 @@ project-zhou/
 - `_file_matches_short_id()` 同时兼容下载原名 `JM1140 xxx` 与知识库新名 `26.10月-JM1140-xxx`
 - 知识库双链由 Obsidian 自动维护（重命名走 `obsidian rename`）；`audit_lint.parse_tea_filename` 已兼容新旧两种文件名
 
-**年月怎么定（`YY.MM`，2026-11-12 定稿）**——**JM 编号顺序是第一优先级**，任何日期来源都不得让编号递增时年月倒退：
+**年月怎么定（`YY.MM`）**——**JM 编号顺序第一优先**，任何日期来源都不得让编号递增时年月倒退：
 
-1. **坚果云条目日期**（首选）：`index` 的 `MMDD更新` 是发布日。页面是**跨 5 年的累计清单**（2021-07 → 2026-11），年份必须由 `build_entry_dates()` 从**最新一条倒推**，禁止用「当前年 + 条目月份」直接拼（历史上就是这么把 JM1 推成 2021-01 的）。
-2. **原批次年月**：仅当该批编号集中（剔除「迟到归档」——编号远离批次中位数的单条，如 2022-01 里的 JM5）。**`2021年01月_` 那 137 条是批量归档日，不是发布日期，永不采信**。
+1. **坚果云条目日期**（首选）：`index` 的 `MMDD更新`。页面是**跨 5 年累计清单**，年份必须由 `build_entry_dates()` 从**最新一条倒推**，禁止「当前年 + 条目月份」直接拼（历史上因此把 JM1 推成 2021-01）。
+2. **原批次年月**：仅当该批编号集中（剔除「迟到归档」——编号远离批次中位数的单条）。**`2021年01月_` 那 137 条是批量归档日，永不采信**。
 3. **缺口按编号线性插值**，再全局强制单调。
-4. **PDF 元数据 `creationDate` 最不可靠**（是导出日，不是发布日），只在无其它来源时兜底。
-5. **献词类特例（`JM早期文章`）**：新年献词、春节贺词都写于节日当天，日期直接由节日定——新年献词记 `YY.12月`（标题年份是次年，故 `25.12月-…-2026年新年献词` 归 `历史学习资料-2025`）；春节贺词记春节当天所在月（2020 春节 1/25 → `20.01月`）。文件名用正文标题口径「春节贺词」。
+4. **PDF `creationDate` 最不可靠**（是导出日），仅无其它来源时兜底。
+5. **献词类特例**：新年献词记 `YY.12月`（标题年份是次年，`25.12月-…-2026年新年献词` 归 `历史学习资料-2025`）；春节贺词记春节所在月（2020 春节 1/25 → `20.01月`），文件名用「春节贺词」。
 
 `scripts/audit_dates.py` 是这条规则的守门脚本：检查编号/年月倒挂、同编号多份、与坚果云不符、正文内嵌编号笔误。**同步后应跑一次，退出码非 0 即需处理**。注意「同编号、不同标题」= 两篇不同文章（如 JM143 别做投枪 / JM146 愚公移山），**不是重复**；只有同编号且正文逐字相同才算重复副本。
 
-**通用约定**：
-- 目标目录已存在同名 `.pdf` 一律**跳过不覆盖**（幂等）。
-- 不删 `DOWNLOAD_DIR` 里的源 PDF，不删 `.zip` / `.exe` 残留。
-- **归档流程只写 PDF，不在资料库生成 `.md`**；资料库里既有的 `.md` / `html` / `docx` 等来自并入的历史知识库项目和历史补档，不是归档产物。
-- 返回 `(copied, skipped)` 为**单目的地**口径（只统计项目资料库，2026-11-12 起知识库不再收 PDF）；sync.py 只做日志展示，不解析构成。
-- sync 步骤 7 自动调用；可独立 `python3 archive_pdfs.py` 补跑历史。
+**通用约定**：目标目录已存在同名 `.pdf` **跳过不覆盖**（幂等）；不删 `DOWNLOAD_DIR` 源 PDF 与 `.zip`/`.exe` 残留；**归档只写 PDF，资料库不生成 `.md`**（既有 `.md`/`html`/`docx` 来自历史补档，非归档产物）；`(copied, skipped)` 是**单目的地**口径。sync 步骤 7 自动调用，也可 `python3 archive_pdfs.py` 补跑。
 
 ### 4.8 外置盘增量备份（手动执行）
 
@@ -183,7 +182,7 @@ python3 sync.py                  # 从 progress.json 的 last_sync_date 续跑
 python3 sync.py 0624             # 首次运行 / 强制指定起点
 python3 sync.py --headless       # 后台跑（隐藏浏览器窗口）
 ```
-行为：抓页 → 解析 → 下载 → 解压 → 重命名 → 转 MD → 归档 PDF → 更新 progress.json → 完整性验证。
+行为（9 步，与运行时 log 编号一致）：1 抓页（含密码重试与封禁保护）→ 2 解析 → 3 下载 → 4 解压 → 5 处理 `.exe` 伪装 → 6 转 MD（双引擎质检）→ 7 归档 PDF（只进资料库）→ 8 更新 progress.json → 9 完整性验证。
 
 ### 5.2 分步调试（适合失败时排查）
 ```bash
@@ -194,7 +193,8 @@ python3 download.py 0624         # 只下载（接受上次日期作为参数）
 python3 extract.py               # 只解压茶馆杂谈文件同步/ 下的全部压缩包
 python3 archive_pdfs.py          # 只归档 PDF（补跑历史或单独调试）
 python3 archive_pdfs.py --dry-run # dry-run：只显示待拷贝列表
-python3 pdf_to_md.py             # 默认 light 模式
+python3 pdf_to_md.py             # 默认 light 模式（转换即排版）
+python3 pdf_to_md.py --no-format # 仅诊断：跳过排版，正常同步不要用
 python3 pdf_to_md.py --auto      # 自动扫描 + 推荐模式
 python3 pdf_to_md.py --mode light|medium|full
 ```
@@ -217,17 +217,29 @@ python3 backup_to_external.py --check   # 只读体检，不写入
 
 ---
 
+## 5.5 定期同步的标准执行流程（项目级 Skill）
+
+`.kimi-code/skills/chaguan-sync/` 是本项目**定期同步的标准流程入口**：7 阶段（预检 → 导出比对材料 → LLM 语义复查 → 修复门禁 → 规则修正 → 收尾报告）。用户说「同步一下」时自动加载。
+
+三支脚本（需 `env -u PYTHONPATH /usr/bin/python3`）：`precheck.py` 机械预检（信号 `lead_orphaned` / `para_too_long` / `para_dangling`，**只报证据不下结论**，阈值用已验收的 1241 篇存量库反标定）；`export_review.py` 导出 `md.md` + 带 `[断]/[续]` 标记的 `src.txt` + `para_map.json`；`verify_fix.py` 修复门禁（字符守恒 / H1 / 无三连空行 / 再排版幂等 / 无占位残留，**全绿才能落盘**）。
+
+修复两段 = 删掉中间空行、两段文本直接相连（写错会「再排版又拆开」→ 幂等门禁失败）。判据细节见 skill 的 `references/layout_review_rubric.md`。
+
+---
+
 ## 6. 测试与质检
 
-**没有正式的 pytest / unittest 测试目录**。质检以两种形态存在：
+**没有正式的 pytest / unittest 测试目录**（`scripts/test_md_layout.py` 是独立回归脚本，非框架测试）。质检以三种形态存在：
 
-1. **PDF → Markdown 双引擎交叉质检**（`pdf_to_md.py._compare_pages`，`pdfplumber` + `PyMuPDF` 逐页比字符数）：`diff_ratio > 0.15` → `warn`；一边有文本一边没有、纯图片页 → `error`；含图且文本 <50 字符 → `warn`；末页双引擎一致判空且其余页有内容 → `ok`（源 PDF 自带空白尾页），中间空白页仍 `warn`。结果落 `_qc_report.json`（`{mode, stats, details}`）。**历史补档仍有纯图片页 / 文本差异警告，不能声称全库 QC 无警告。**
+1. **PDF → Markdown 双引擎交叉质检**（`_compare_pages`，`pdfplumber` + `PyMuPDF` 逐页比字符数）：`diff_ratio > 0.15` → `warn`；一侧无文本、纯图片页 → `error`；含图且文本 <50 字符 → `warn`；末页一致判空且其余页有内容 → `ok`，中间空白页仍 `warn`。结果落 `_qc_report.json`。**历史补档仍有警告，不能声称全库 QC 无警告。**
 2. **离线复跑**——`progress.json` 充当"测试 fixture"。每次同步后增量记录历史，回看 `total_downloaded` / `history[].count` 判断当次稳态。
+3. **排版回归测试**（2026-11-12 起）：`test_md_layout.py` 比对 project-zhou 与知识库两份规则实现的输出、门禁结论与 `RULE_VERSION`，并验证存量已排版文件幂等；含排版被跳过 / 掉字 / 缺 H1 / 连续空行四类负例。改 `md_layout.py` 或知识库侧 `format_chaguan_md.py` 后必跑，退出码非 0 不得同步。
 
 **修改脚本时的最低验证**：
 ```bash
 cd scripts
-python3 -c "import extract, parse_html, fetch_jianguoyun, download, pdf_to_md, archive_pdfs, naming, audit_dates, sync"
+python3 -c "import extract, parse_html, fetch_jianguoyun, download, pdf_to_md, archive_pdfs, naming, audit_dates, sync, md_layout"
+python3 test_md_layout.py                          # 排版回归：双份一致性 + fail-close 门禁（改规则必跑）
 python3 pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 ```
 
@@ -244,36 +256,27 @@ python3 pdf_to_md.py --auto <small_test_dir>      # 走一遍整条转换
 `茶馆杂谈文件同步/` 里出现的 `.exe` 全部是 PDF 伪装。`rename_exe_to_pdf()` 之外**绝对不要**对这些文件做 `subprocess.run([...])` 之类。代码里碰到 `.exe` 时一律先 `read(5) == b"%PDF-"` 判别。
 
 ### 7.3 状态标记用 ASCII
-旧版踩坑：Windows bash 默认 GBK 编码导致 Unicode 符号（`✓` `⚠`）崩溃。修复方式：所有状态标记一律用 ASCII `[OK]` / `[FAIL]` / `[WARN]`。**新代码不要回退到 Unicode 符号**——即便当前是 macOS，也要保持跨平台可移植。
+旧版 Windows GBK 下 Unicode 符号（`✓` `⚠`）会崩。所有状态标记一律 `[OK]` / `[FAIL]` / `[WARN]`，**不要回退到 Unicode**，即便当前是 macOS。
 
 ### 7.4 路径硬编码
-脚本里多处出现 `/Users/allenwywang/...`，这是单人项目本机化设计。**不要为了"通用化"擅自抽参数**，除非项目主明确要求。若确要改，至少要同步更新 `sync.py`、`pdf_to_md.py`、`download.py`、`extract.py` 中的同一路径常量。
+`/Users/allenwywang/...` 是单人项目本机化设计，**不要为了"通用化"擅自抽参数**。确要改时至少同步更新 `sync.py`、`pdf_to_md.py`、`download.py`、`extract.py` 的同一常量。
 
 ### 7.5 Playwright → 本机 Chrome
-`p.chromium.launch(channel="chrome", ...)` 是已知选择（国内 CDN 拉 chromium 太慢）。改回 `playwright install chromium` 的默认写法前需先确认网络可达，否则同步会卡在 git 拉源。
+`channel="chrome"` 是已知选择（国内拉 chromium 太慢）。改回默认写法前先确认网络可达。
 
 ### 7.6 AI 会话里跑脚本必须先清 PYTHONPATH
 WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`，它 patch 了 `os.mkdir` / `Path.mkdir`：对**已存在**的目录不遵守 `exist_ok=True`，伪报 `FileExistsError`（步骤 1 的 `mkdir assets` 必踩）。同时宿主默认 `python3` 常是自带的 3.13，缺 `playwright` / `pdfplumber` / `fitz`。
 
-在 AI 会话里跑本项目脚本统一用：
-```bash
-env -u PYTHONPATH /usr/bin/python3 sync.py
-```
-本机 `/usr/bin/python3` 是 3.9.6 且依赖齐全；用户在自己的终端里不需要这层包装。这是**执行环境差异，不是代码 bug**——不要为此改动 `mkdir` 调用。
+在 AI 会话里统一用 `env -u PYTHONPATH /usr/bin/python3 sync.py`。本机 `/usr/bin/python3` 是 3.9.6 且依赖齐全；用户自己终端不需要这层包装。这是**执行环境差异，不是代码 bug**——不要改 `mkdir` 调用。
 
 ---
 
 ## 8. 常见调试指引
 
-| 现象 | 优先检查 |
-|------|---------|
-| `sync.py` 报"未找到 XXXX 更新" | `progress.json` 的 `last_sync_date` 是否已超过源页最新条目；跑 `python3 parse_html.py` 看实际解析到哪几条 |
-| 下载按钮找不到 | 蓝奏云偶发改 selector；当前匹配 `a.btn, a[href*='down'], input.bott, a:has-text('下载')` 等多组。用 `page.content()` 诊断蓝奏云 DOM（`assets/jianguoyun.png` 是坚果云页截图，用不上） |
-| 所有 .exe 未被重命名 | 用 Python 读前 5 字节确认真实 magic：`with open(f, "rb") as fh: fh.read(5)`；不是 `%PDF-` 才跳过 |
-| `_qc_report.json` 显示大量 `pdfplumber 漏提` | 文件大或多列表格；当前只能 light 档，medium/full 未接入多模态 |
-| 压缩包解压失败 | 7z 不在 PATH / 文件名不含数字（无密码）；手动 `7z x -p<纯数字> <file>` 验证 |
-| 坚果云反复弹密码框 | 已接近封禁。重置路由器 / VPN 切 IP 后再试 |
-| 备份脚本报 exit 2 | 外置盘未挂载或 `/Volumes/My PSSD/文档资料/project-zhou` 不存在；挂载后重跑，**不要**自动创建目录 |
+同步 / 转换 / 复查 / 审计 / 备份各阶段的故障定位（含坚果云封禁、蓝奏云中转页下载失败、
+`.exe` 未改名、`[LAYOUT-FAIL]`、预检误报、`verify_fix` 报错、备份 exit 2 等），
+**统一见 skill 的 `.kimi-code/skills/chaguan-sync/references/troubleshooting.md`**。
+该文档附带存量库标定基线（段落长度分布、各信号命中率），改阈值前必读。
 
 ---
 
@@ -299,15 +302,17 @@ env -u PYTHONPATH /usr/bin/python3 sync.py
 - **不要改动** `backup_to_external.py` 的 `DIR_MAP` 目录映射——外置盘沿用旧目录命名，映射表是两侧对上的约定。
 - **不要**把 JM 文件名改回 `YYYY年MM月_JMxxx 标题` 或 `JMxxx 标题`——知识库已统一为 `YY.MM月-JMxxx-标题`，`scripts/naming.py` 是唯一事实源（含 `JM早期文章` 无编号分支）。
 - **不要**让 python / 外篇 / WP 重新进知识库 `MARKDOWN_DIR`——它们只归档项目资料库（2026-11-12 起）。
+- **不要**移除 `pdf_to_md.py::_convert_light` 里的 `md_layout.layout()` 调用、门禁判断或 `md_content == raw_md` 断言，也不要把 `do_format` 默认值改成 `False`——这是 2026-11-12 全库排版成果不回归的唯一防线；`--no-format` 只能用于诊断。
 
 ---
 
 ## 10. 版本/状态速览
 
-- 主推入口：`scripts/sync.py`。Markdown 模式当前只用 `light`（双引擎文本），`medium` / `full` 是预留接口。
-- **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221（含 2–38 合订本）、C++ 外篇 1–9、**JM 1–1148**、Python 1–925（含 `Python学习材料22-32.pdf` 合订本）、Python 外篇 1–348，**两边均 0 缺号**。JM 侧知识库 1233 个 `.md`（1147 个编号，缺 JM5 的 md）、资料库 1234 个 PDF（1148 个编号，含 `20.01月-JM5-社区浅谈.pdf`，其内容与 `20.01月-JM早期文章-春节贺词` 逐字相同，属错标编号的副本）。**全库体检必须展开合订本编号范围**，否则 Python 23–32 这类会被误报缺号。
-- 归档：**单目的地**——只进项目资料库，增量不覆盖、幂等；知识库只放 MD。JM → 发布年目录（`<=2020` 进 `2020及以前`）+ 与知识库 md 同名的 `YY.MM月-JMxxx-标题.pdf`，python / 外篇 / WP → `Python学习材料`。
-- **外置盘备份**：2026-11-01 初始化时 identical 10669 / missing 0。**该数字已过期**——2026-11-12 资料库重命名 + 按年归位 + 移出 6 个重复件，尚未重跑；下次挂载后先 `--check` 再增量同步。手动执行，**不建定时任务**。
+- 主推入口 `scripts/sync.py`；Markdown 只用 `light`（双引擎），`medium`/`full` 是预留接口。
+- **排版**：1241 篇存量 MD 已于 2026-11-12 全量排版完成；此后转换即排版（§4.5）。
+- **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221（含 2–38 合订本）、C++ 外篇 1–9、**JM 1–1148**、Python 1–925（含 22-32 合订本）、Python 外篇 1–348，**两边 0 缺号**。知识库 1233 个 `.md`（缺 JM5 的 md）；资料库 1234 个 PDF（含 `20.01月-JM5-社区浅谈.pdf`，内容与 `春节贺词` 逐字相同，属错标编号副本）。**全库体检必须展开合订本编号范围**，否则 Python 23–32 会被误报缺号。
+- 归档：**单目的地**（只进项目资料库，增量不覆盖、幂等；知识库只放 MD），规则见 §4.7。
+- **外置盘备份**：2026-11-01 初始化的 identical 数字已过期（11-12 资料库重命名 + 按年归位）。下次挂载后先 `--check` 再增量同步；手动执行，**不建定时任务**。
 - 历史补档（含从其他目录并入的无编号 JM 资料）部分 Markdown 仍带纯图片页 / 文本差异 QC 警告，**原版 PDF 存档完整**——属已知情况，不是数据缺陷。
 
 ---
@@ -317,9 +322,9 @@ env -u PYTHONPATH /usr/bin/python3 sync.py
 `sync.py` 步骤 9 的 `verify_completeness()`：在 last_date ~ latest_date 范围内逐条检查。
 
 - **5 状态**：`ok`（PDF+MD）/ `needs_convert`（有 PDF 无 MD）/ `needs_unzip`（zip 未解压）/ `needs_rename`（.exe 未改名）/ `missing`（都没有）。
-- **匹配**：`_file_matches_short_id()` 把条目短 ID（`JM1066`/`WP330`/`python873`）映射到产物真实前缀（`JM1066 <title>`/`外篇330`/`python学习材料873`）。
-- **断号**：`_detect_sequence_gaps()` 查 JM / WP / python学习材料 三系列连续性，任何缺号都列异常。**每次同步都要查编号完整性。**
-- **增量口径（2026-11-01）**：首次已全量覆盖 C++/Python/JM/外篇；此后只查 `last_date` 锚点（含边界日前序条目）到 `latest_date` 的新增编号是否连续，**不重复扫全库**。C++ 已完结，无新增不参与常规检查。
-- **报告落盘**：`data/completeness_report.json`（`{ anchor_date, latest_date, checked_count, by_status, missing, needs_convert, needs_unzip, sequence_gaps }`）。
+- **匹配**：`_file_matches_short_id()` 把短 ID（`JM1066`/`WP330`/`python873`）映射到产物真实前缀（`外篇330`/`python学习材料873` 等）。
+- **断号**：`_detect_sequence_gaps()` 查 JM / WP / python学习材料 三系列连续性。**每次同步都要查。**
+- **增量口径**：首次已全量覆盖；此后只查 `last_date` 锚点（含边界日前序条目）到 `latest_date` 的新增编号是否连续，**不重复扫全库**。C++ 已完结，不参与常规检查。
+- **报告落盘**：`data/completeness_report.json`（字段含 `by_status` / `missing` / `sequence_gaps`）。
 
-**典型用法**（补跑历史遗漏）：`sync.verify_completeness(entries, '起', '止')` 打印 `missing` → 手喂 `sync.download_entries([...])` 补下 → `extract_archives()` + `rename_exe_to_pdf()` + `pdf_to_md.py --mode light` → 复跑确认 0 缺失。
+**补跑历史遗漏**：`verify_completeness(entries,'起','止')` 打 `missing` → `download_entries([...])` 补下 → `extract_archives()` + `rename_exe_to_pdf()` + `pdf_to_md.py --mode light` → 复跑确认 0 缺失。
