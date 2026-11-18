@@ -28,4 +28,3 @@ Thumbs.db
 # we-mp-rss 容器持久化数据（SQLite/缓存/导出），不入仓
 we-mp-rss/
 
-wechat-download-api/
