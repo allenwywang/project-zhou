@@ -12,9 +12,20 @@ progress.json
 *.log
 download_log.txt
 
+# Python 构建产物
+__pycache__/
+
+# IDE 输入图缓存
+.qoder-input-images/
+
 # 系统文件
 .DS_Store
 Thumbs.db
 
 # Agent 工作区记忆（本机留存，不入仓）
 .workbuddy/
+
+# we-mp-rss 容器持久化数据（SQLite/缓存/导出），不入仓
+we-mp-rss/
+
+wechat-download-api/

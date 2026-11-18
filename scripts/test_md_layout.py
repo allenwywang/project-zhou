@@ -19,7 +19,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent
 ALLEN_PROJECTS = SCRIPTS.parent.parent
 KB_SCRIPTS = ALLEN_PROJECTS / "历史学习资料" / "历史学习" / "scripts"
-KB_RAW = ALLEN_PROJECTS / "历史学习资料" / "历史学习" / "raw" / "articles" / "茶馆杂谈"
+KB_RAW = ALLEN_PROJECTS / "历史学习资料" / "历史学习" / "raw" / "articles" / "茶馆杂谈" / "JM系列"
 
 sys.path.insert(0, str(SCRIPTS))
 import md_layout

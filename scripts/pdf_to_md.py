@@ -46,7 +46,7 @@ DOWNLOAD_DIR = Path("/Users/allenwywang/allen个人项目/project-zhou/茶馆杂
 # 历史学习知识库（独立 Obsidian 库，与 project-zhou 同级目录；
 # 2026-11-06 从 周老师茶馆历史文档/历史学习资料项目/ 迁出到这个位置）
 HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
-OUTPUT_DIR   = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
+OUTPUT_DIR   = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈" / "JM系列"
 QC_REPORT    = OUTPUT_DIR / "_qc_report.json"
 
 # 转换范围：只转 JM 系列。python学习材料 / ptyhon学习材料 / 外篇 / WP 照常下载与归档，

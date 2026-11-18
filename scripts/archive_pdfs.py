@@ -45,7 +45,7 @@ LIBRARY_ROOT    = PROJECT_ROOT / "周老师茶馆历史文档"
 # 历史学习知识库（独立 Obsidian 库，与 project-zhou 同级目录；
 # 2026-11-06 从 周老师茶馆历史文档/历史学习资料项目/ 迁出到这个位置）
 HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
-MARKDOWN_DIR    = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
+MARKDOWN_DIR    = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈" / "JM系列"
 
 # 项目资料库分类：文件名（去扩展名）前缀 -> 目标子目录
 # python 系列含 ptyhon 误拼变体（蓝奏云偶发返回，见 sync.py._file_matches_short_id）

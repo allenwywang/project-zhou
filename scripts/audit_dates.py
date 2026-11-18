@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import naming as N
 import sync
 
-DEFAULT_KB = sync.MARKDOWN_DIR
+DEFAULT_KB = sync.MARKDOWN_DIR  # 已随 sync.py 指向 JM系列/
 EMBED_RE = re.compile(r"^\s*JM\s*0*(\d+)\b", re.M)
 
 

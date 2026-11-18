@@ -33,6 +33,9 @@ project-zhou/
 │   ├── audit_dates.py          # 日期/编号审计（同步后跑，非 0 退出需处理）
 │   ├── archive_pdfs.py         # PDF 归档：只进资料库（§4.7）
 │   ├── backup_to_external.py   # 资料库 → 外置盘增量备份，手动（§4.8）
+│   ├── wechat_client_fetch.py / mp_req_logger.py   # 公众号管线（skill doc-ingest）：凭据捕获/列表
+│   ├── wechat_archive.py / trim_promo_tail.py / final_report.py / dedup_against_kb.py  # 公众号正文抓取/引流清洗/对账
+│   └── 归档 skill：~/.claude/skills/doc-ingest/（核心技能，统管两管线；详见其 SKILL.md）
 │   ├── fetch_jianguoyun.py     # 抓页旧版（密码硬编码 0403，与现役不符）
 │   ├── parse_html.py / download.py / extract.py   # 解析/下载/解压旧版，分步调试用
 ├── data/jianguoyun_page.html   # 坚果云页快照（运行时生成，gitignore）
@@ -43,7 +46,7 @@ project-zhou/
 ```
 
 **对外输出**（不在仓库内）：
-- Markdown + `_qc_report.json` → `/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/`（常量 `MARKDOWN_DIR`）。**只放 `.md` 不放 PDF**，**只收 JM 系列**（python/外篇/WP 只归档资料库），文件名 `YY.MM月-JMxxx-标题`（§4.7）。
+- Markdown + `_qc_report.json` → `/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/JM系列/`（常量 `MARKDOWN_DIR`；2026-11-18 起独立子目录，与「公众号直采/」平行）。**只放 `.md` 不放 PDF**，**只收 JM 系列**（python/外篇/WP 只归档资料库），文件名 `YY.MM月-JMxxx-标题`（§4.7）。
 - PDF 归档副本 → 仓库内 `周老师茶馆历史文档/`；外置盘备份 → `/Volumes/My PSSD/文档资料/project-zhou`（对应资料库根目录，**不是仓库镜像**，§4.8）。
 
 **依赖**：无 `pyproject.toml` / `requirements.txt`，靠脚本 `import` 自描述：`playwright`（配本机 Chrome）、`pdfplumber`、`PyMuPDF`（`fitz`）、`7z`（Homebrew `p7zip`）。
@@ -60,7 +63,7 @@ project-zhou/
 本地 DOWNLOAD_DIR (茶馆杂谈文件同步/)
       ├─ extract_archives()  ──7-zip──▶ 子文件落同目录
       ├─ rename_exe_to_pdf() ─读头 magic──▶ .exe → .pdf
-      ├─ PdfConverter.convert_batch() ─pdfplumber + fitz─▶ MARKDOWN_DIR (*.md, 仅 JM)
+      ├─ PdfConverter.convert_batch() ─pdfplumber + fitz─▶ MARKDOWN_DIR/JM系列 (*.md, 仅 JM)
       └─ archive_pdfs() ─copy2─▶ 周老师茶馆历史文档/（按发布年入年度目录，新命名，增量）
                           【单目的地：知识库不收 PDF】
 ```
@@ -128,7 +131,7 @@ project-zhou/
 
 ### 4.7 存档分工：知识库只放 MD，PDF 只进资料库
 
-`archive_pdfs(namer=None)` 把 `茶馆杂谈文件同步/*.pdf` 增量归档到项目资料库。**知识库 `MARKDOWN_DIR` 只放 `.md`**（`pdf_to_md` 写），**不收 PDF**（2026-11-12 规则，此前并排的 94 个 PDF 已清空）。两侧同 stem 对应：`xx.md`（知识库）↔ `xx.pdf`（资料库）。命名由 `scripts/naming.py` 生成，`sync.py` 按条目日期传 `namer`。
+`archive_pdfs(namer=None)` 把 `茶馆杂谈文件同步/*.pdf` 增量归档到项目资料库。**知识库 `MARKDOWN_DIR`（茶馆杂谈/JM系列/）只放 `.md`**（`pdf_to_md` 写），**不收 PDF**（2026-11-12 规则，此前并排的 94 个 PDF 已清空）。两侧同 stem 对应：`xx.md`（知识库）↔ `xx.pdf`（资料库）。命名由 `scripts/naming.py` 生成，`sync.py` 按条目日期传 `namer`。
 
 **项目资料库 `周老师茶馆历史文档/`（PDF 唯一归属地）**：
 - `JM\d...` → `历史学习资料-YYYY/`，**YYYY = 发布年**（由新命名 `YY.MM月-` 推出，不是当前年）；**`<=2020` 统一进 `历史学习资料-2020及以前`**。文件名与知识库**完全一致**（2026-11-12 起两侧同名，改名前资料库是 `JM273 你明知内涵但也不好办.pdf` 这类老格式）
