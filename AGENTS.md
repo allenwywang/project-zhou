@@ -25,8 +25,8 @@ project-zhou/
 ├── .claude/skills/doc-ingest/  # 【核心技能】统管三管线；公众号管线脚本在此（~/.claude/skills/doc-ingest 为其软链）
 ├── scripts/                    # sync.py（蓝奏云主控，§5.1）/ pdf_to_md.py+md_layout.py+test_md_layout.py（§4.5/§6）/
 │                                # naming.py+audit_dates.py+archive_pdfs.py+backup_to_external.py（§4.7/§4.8）/
-│                                # zlsdcg_*.py（个人站，§5.6/§5.7）
-│                                # fetch_jianguoyun.py+parse_html.py+download.py+extract.py（旧版，分步调试用）
+│                                # zlsdcg_*.py（个人站，§5.6/§5.7）/ fetch_jianguoyun.py+parse_html.py+
+│                                # download.py+extract.py（旧版，分步调试用）
 ├── data/                       # 运行时数据（gitignore）：坚果云页快照、zlsdcg_archive/、wechat_archive/
 ├── progress.json               # 同步进度（唯一状态源，gitignore）
 ├── 茶馆杂谈文件同步/            # 下载产物（gitignore）：*.pdf / *.exe / *.zip / <uuid>
@@ -118,7 +118,7 @@ project-zhou/
 
 `scripts/audit_dates.py` 是这条规则的守门脚本（编号/年月倒挂、同编号多份、与坚果云不符、正文内嵌编号笔误），**同步后跑一次，退出码非 0 即需处理**。「同编号、不同标题」= 两篇不同文章（如 JM143 别做投枪 / JM146 愚公移山），**不是重复**；只有同编号且正文逐字相同才算重复副本。
 
-**通用约定**：目标目录已有同名 `.pdf` **跳过不覆盖**（幂等）；不删 `DOWNLOAD_DIR` 源 PDF 与 `.zip`/`.exe` 残留；**归档只写 PDF，资料库不生成 `.md`**（既有 `.md`/`html`/`docx` 来自历史补档）；`(copied, skipped)` 是**单目的地**口径。sync 步骤 7 自动调用，也可 `python3 archive_pdfs.py` 补跑。
+**通用约定**：同名 `.pdf` **跳过不覆盖**（幂等）；不删源 PDF 与 `.zip`/`.exe` 残留；**归档只写 PDF，资料库不生成 `.md`**（既有 `.md`/`html`/`docx` 来自历史补档）；`(copied, skipped)` 是**单目的地**口径。sync 步骤 7 自动调用，也可 `python3 archive_pdfs.py` 补跑。
 
 ### 4.8 外置盘增量备份（手动执行）
 
@@ -191,11 +191,15 @@ zlsdcg_fetch.py → zlsdcg_index_kb.py → zlsdcg_process.py --prepare → zlsdc
 → zlsdcg_render_pdfs.py → zlsdcg_verify.py → zlsdcg_final_report.py
 ```
 
-**引流尾块**：个人站文章末尾的「更多交流，请关注小红圈/芥末圈（孤苑白首…）」**及其配图**与正文无关，不入正文。管线锚点已覆盖（此前只认「（完）/404文章获取/个人网站：」），存量 775 篇已用 `scripts/zlsdcg_backfill_trim.py` 回填（备份在 `data/zlsdcg_archive/backfill_trim_backup/`）。改截断规则要 bump `trim_promo_tail.py` 的 `RULE_VERSION`，否则 `trim_state.json` 会跳过旧文件不再重判。
+**判重以身份锚点为准**（同一 wordpress_id / 来源链接），正文比对只用于判断是否需要重新收录——知识库副本被后处理（如裁掉引流尾块）后正文哈希不再相等，站点侧 fuller 版本会被误判成"新增"。
+
+**排除清单**（`scripts/zlsdcg_exclude.json`，随仓库 git）：按标题关键词排除不入库的文章，命中即判重复、不进发布清单，否则用户手工删除的文章会被下次增量重新发布。现含「【黑木崖系列】」（独立系列，暂不收录）。
+
+**引流尾块**：文章末尾的「更多交流，请关注小红圈/芥末圈（孤苑白首…）」**及其配图**与正文无关，不入正文；管线锚点已覆盖，存量 775 篇用 `scripts/zlsdcg_backfill_trim.py` 回填（备份在 `data/zlsdcg_archive/backfill_trim_backup/`）。改截断规则要 bump `trim_promo_tail.py` 的 `RULE_VERSION`，否则 `trim_state.json` 会跳过旧文件不再重判。
 
 **语义复核可沿用上一轮判定**，但必须机械核验证据一致（status / nearest path / similarity / 正文哈希），差异项单独复核并在 decision 标注 `carried_over_from`；批次与决定文件 ID 集必须完全相同（`semantic_batches/batch-*.json` ↔ `review_decisions/semantic-*.json`）。每轮关键产物复制到 `data/zlsdcg_archive/history/<日期>/`。
 
-**不要在发布后单独重跑 `zlsdcg_finalize_review.py`**：它依赖知识库现状判定"已归档"，发布后重跑会把刚发布的文章改判为重复，与 manifest / 验收记录脱节。要重跑就整链重跑，或先从 `history/<日期>/review_decisions.json` 恢复发布时状态。
+**发布后不要单独重跑 `zlsdcg_finalize_review.py`**（它按知识库现状判"已归档"，会把刚发布的文章改判为重复）：要重跑就整链重跑，或先从 `history/<日期>/review_decisions.json` 恢复发布时状态。`zlsdcg_verify.py` 是子集校验，清单里含上一轮已发布项属正常。
 
 ---
 
@@ -203,9 +207,8 @@ zlsdcg_fetch.py → zlsdcg_index_kb.py → zlsdcg_process.py --prepare → zlsdc
 
 无 pytest/unittest 测试目录（`test_md_layout.py` 是独立回归脚本）。质检三种形态：
 
-1. **PDF → Markdown 双引擎交叉质检**（`_compare_pages`，`pdfplumber` + `PyMuPDF` 逐页比字符数）：`diff_ratio > 0.15` → `warn`；一侧无文本、纯图片页 → `error`；含图且文本 <50 字符 → `warn`；末页一致判空且其余页有内容 → `ok`（中间空白页仍 `warn`）。结果落 `_qc_report.json`。**历史补档仍有警告，不能声称全库 QC 无警告。**
-2. **离线复跑**——`progress.json` 充当"测试 fixture"。每次同步后增量记录历史，回看 `total_downloaded` / `history[].count` 判断当次稳态。
-3. **排版回归测试**（2026-11-12 起）：`test_md_layout.py` 比对 project-zhou 与知识库两份规则实现的输出、门禁结论与 `RULE_VERSION`，并验证存量已排版文件幂等；含排版被跳过/掉字/缺 H1/连续空行四类负例。改 `md_layout.py` 或知识库侧 `format_chaguan_md.py` 后必跑，退出码非 0 不得同步。
+1. **PDF → Markdown 双引擎交叉质检**（`_compare_pages`，`pdfplumber` + `PyMuPDF` 逐页比字符数）：`diff_ratio > 0.15` → `warn`；一侧无文本、纯图片页 → `error`；含图且文本 <50 字符 → `warn`；末页一致判空而其余页有内容 → `ok`（中间空白页仍 `warn`）。结果落 `_qc_report.json`。**历史补档仍有警告，不能声称全库 QC 无警告。**
+3. **排版回归测试**（2026-11-12 起）：`test_md_layout.py` 比对两份规则实现的输出、门禁结论与 `RULE_VERSION`，并验证存量已排版文件幂等；含排版被跳过/掉字/缺 H1/连续空行四类负例。改 `md_layout.py` 或知识库侧 `format_chaguan_md.py` 后必跑，非 0 不得同步。
 
 **修改脚本时的最低验证**：
 ```bash
@@ -253,7 +256,7 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 - **不要把** `archive_pdfs()` 改成覆盖同名 `.pdf`（存档只追加，覆盖破坏历史真相）；**不要**把 PDF 放进知识库 `MARKDOWN_DIR`（MD 里 `> 原文件：xxx.pdf` 只是溯源）；**不要**往项目资料库写 `.md`（MD 只在 MARKDOWN_DIR 生成）。
 - **不要改动** `archive_pdfs()` 的 `classify_project_dest()` 分类规则：JM → `历史学习资料-<发布年>`（`<=2020` 进 `历史学习资料-2020及以前`），python/ptyhon/外篇/WP → `Python学习材料`；未识别前缀不擅自归类，只外部归档 + `[WARN]`。
 - **不要把** `archive_pdfs()` 改回双目的地（知识库只放 `.md`、PDF 只进资料库；`(copied, skipped)` 是单目的地口径，2026-11-12 前的旧口径已废）。
-- **不要**让 `backup_to_external.py` 覆盖备份侧内容不同的同名文件、删除备份侧额外文件、在备份根目录不存在时自动创建、或挂 launchd/cron 定时任务——只列异常不覆盖、只报告不删除、未挂载必须 exit 2、用户要求手动执行；**不要改动** `DIR_MAP`。
+- **不要**让 `backup_to_external.py` 覆盖备份侧内容不同的同名文件、删除备份侧额外文件、自动创建备份根目录、或挂 launchd/cron 定时任务——只列异常不覆盖、只报告不删除、未挂载必须 exit 2、手动执行；**不要改动** `DIR_MAP`。
 - **不要**把 JM 文件名改回 `YYYY年MM月_JMxxx 标题`/`JMxxx 标题`（已统一为 `YY.MM月-JMxxx-标题`，`scripts/naming.py` 是唯一事实源）；**不要**让 python / 外篇 / WP 重新进知识库 `MARKDOWN_DIR`。
 - **不要移除** `pdf_to_md.py::_convert_light` 里的 `md_layout.layout()` 调用、门禁判断或 `md_content == raw_md` 断言，也不要把 `do_format` 默认值改成 `False`（全库排版成果不回归的唯一防线；`--no-format` 只用于诊断）。
 - **不要删掉** `zlsdcg_finalize_review.py` 的「同一 wordpress_id / 来源链接已在知识库 → 判重复」判定（否则增量重跑会重复发布已归档文章）；**不要在** `zlsdcg_verify.py` 里写死源站文章总数（读 `fetch_report.json` 的 `fetched_total`）；**不要**把 `zlsdcg_download_assets.py` 与 `zlsdcg_finalize_assets.py` 连着跑（前者改写暂存 MD 的图片引用，后者随后误判失败并阻断发布）。
@@ -266,10 +269,9 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 
 - 主推入口 `scripts/sync.py`；Markdown 只用 `light`（双引擎）。
 - **排版**：2026-11-12 全量排版完成，此后转换即排版（§4.5）。
-- **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221、外篇 1–9、JM 1–1148、Python 1–925、Python 外篇 1–348（合订本须展开范围）。知识库缺 JM5 的 MD；资料库 JM5 PDF 实为「春节贺词」错标副本。
 - 归档：**单目的地**（只进项目资料库，增量不覆盖、幂等；知识库只放 MD），规则见 §4.7。
-- **外置盘备份**：挂载后先 `--check` 再增量同步（旧基线已过期，11-12 资料库重命名 + 按年归位）；手动执行，**不建定时任务**。
-- 历史补档部分 Markdown 仍带纯图片页 / 文本差异 QC 警告，**原版 PDF 存档完整**——已知情况，非数据缺陷。
+- **外置盘备份**：挂载后先 `--check` 再增量同步（旧基线已过期）；手动执行，**不建定时任务**。
+- 历史补档部分 Markdown 仍带纯图片页 / 文本差异 QC 警告，**原版 PDF 存档完整**——已知情况。编号完整性以 `audit_dates.py` 为准（10 处正文编号笔误是存量稳态，非新引入）。
 - **zlsdcg 个人站**：全量轮 2026-11-22 发布 1702 篇，其后用户手工删除 24 篇「【黑木崖系列】」引流文，现库内 1679 篇；增量轮 2026-11-23 打通（新增 1 篇，验收 0 问题），规则见 §5.7。
 
 ---
@@ -279,9 +281,9 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 `sync.py` 步骤 9 的 `verify_completeness()` 在 last_date ~ latest_date 范围内逐条检查。
 
 - **5 状态**：`ok`（PDF+MD）/ `needs_convert`（有 PDF 无 MD）/ `needs_unzip` / `needs_rename`（.exe 未改名）/ `missing`。
-- **匹配**：`_file_matches_short_id()` 把短 ID（`JM1066`/`WP330`/`python873`）映射到产物真实前缀（`外篇330`/`python学习材料873` 等）。
+- **匹配**：`_file_matches_short_id()` 把短 ID（`JM1066`/`WP330`/`python873`）映射到产物真实前缀（`外篇330` 等）。
 - **断号**：`_detect_sequence_gaps()` 查 JM / WP / python学习材料 三系列连续性。**每次同步都要查。**
-- **增量口径**：只查 `last_date` 锚点（含边界日前序条目）到 `latest_date` 的新增编号是否连续，**不重复扫全库**。C++ 已完结，不参与常规检查。
+- **增量口径**：只查 `last_date` 锚点（含边界日前序条目）到 `latest_date` 的新增编号是否连续，**不扫全库**；C++ 已完结，不参与常规检查。
 - **报告落盘**：`data/completeness_report.json`（`by_status` / `missing` / `sequence_gaps`）。
 
 **补跑历史遗漏**：打 `missing` → `download_entries([...])` 补下 → `extract_archives()` + `rename_exe_to_pdf()` + `pdf_to_md.py --mode light` → 复跑确认 0 缺失。

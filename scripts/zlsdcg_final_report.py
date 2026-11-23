@@ -80,7 +80,9 @@ def main():
         "# zlsdcg.com 抓取、去重与归档报告", "",
         scope_line,
         f"- 源站文章：{len(decisions)} 篇",
-        f"- 新增归档：{categories['new']} 篇（MD {statuses['md_created']}，PDF 渲染结果见 JSON）",
+        f"- 新增归档：{categories['new']} 篇（MD {statuses['md_created']}"
+        + ("，PDF 渲染结果见 JSON）" if categories['new'] == statuses['md_created']
+           else "；MD 数为上一轮发布记录，本轮未新增）"),
         f"- 知识库正文精确重复：{categories['kb_exact']} 篇",
         f"- 站内正文精确副本：{categories['site_exact']} 篇",
         f"- 按排除清单不纳入：{categories['excluded']} 篇",

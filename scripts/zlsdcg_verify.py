@@ -31,8 +31,13 @@ def main():
     if len({item["stem"] for item in manifest}) != len(manifest):
         issues.append("manifest duplicate stems")
     approved = {int(key) for key, value in decisions.items() if value["decision"] == "new"}
-    if approved != {item["id"] for item in manifest}:
-        issues.append("manifest IDs differ from approved new IDs")
+    manifest_ids = {item["id"] for item in manifest}
+    # 清单是"上一轮发布过什么"，决定是"本轮按当前知识库算出的结论"：
+    # 增量重跑时上轮文章会被改判为"已归档"，两者不再相等是正常的。
+    # 只要求：本轮批准的新增必须都在清单里；清单里多出来的（上轮已发布的）另行核对文件。
+    missing_from_manifest = approved - manifest_ids
+    if missing_from_manifest:
+        issues.append(f"approved new IDs missing from manifest: {sorted(missing_from_manifest)}")
     for item in manifest:
         md = Path(item["staging_md"])
         if not md.is_file() or md.stat().st_size < 150:
@@ -83,7 +88,9 @@ def main():
             except Exception as exc:
                 issues.append(f"{item['id']}: PDF cannot be opened/extracted: {exc}")
     report = {"source_total": len(raw), "approved_new": len(approved),
-              "manifest": len(manifest), "issues": issues,
+              "manifest": len(manifest),
+              "manifest_from_previous_round": sorted(manifest_ids - approved),
+              "issues": issues,
               "status_counts": collections.Counter(value["decision"] for value in decisions.values()),
               "pre_publish": args.pre_publish}
     (WORK / ("prepublish_verification.json" if args.pre_publish else "verification.json")).write_text(
