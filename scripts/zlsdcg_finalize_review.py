@@ -8,10 +8,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "data" / "zlsdcg_archive"
 KB = Path("/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采")
+EXCLUDE_FILE = ROOT / "scripts" / "zlsdcg_exclude.json"
 
 
 def read_jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def excluded_rules():
+    """排除清单：title 命中关键词的文章不纳入知识库（如独立系列，暂不收录）。"""
+    if not EXCLUDE_FILE.is_file():
+        return []
+    try:
+        data = json.loads(EXCLUDE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [rule for rule in data.get("rules", []) if rule.get("keyword")]
 
 
 def published_articles():
@@ -69,6 +81,17 @@ def main():
         decisions[post_id] = {"id": post_id, "decision": "duplicate",
                               "confidence": 1.0, "evidence_path": path,
                               "reason": "统一正文规范化后SHA-256完全一致，机械判重"}
+    # 排除清单优先：命中关键词的文章一律不入库（否则用户手工删掉的文章会被重新发布）。
+    excluded = 0
+    for row in results:
+        for rule in excluded_rules():
+            if rule["keyword"] in (row.get("title") or ""):
+                decisions[row["id"]] = {"id": row["id"], "decision": "duplicate",
+                                        "confidence": 1.0,
+                                        "evidence_path": "excluded:" + rule["keyword"],
+                                        "reason": "按排除清单不纳入知识库：" + rule.get("reason", "")}
+                excluded += 1
+                break
     # 增量重跑：文章已在知识库（同一 wordpress_id 或同一来源链接）即视为已归档，
     # 不再重复发布。机械判重兜不住两种情况——纯图片/空正文文章无从比对，
     # 以及知识库副本被脱敏改写（姓名占位）导致正文哈希不再相等。
@@ -152,7 +175,7 @@ def main():
          "uncertain_kept_new": [row["id"] for row in uncertain]}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     print(json.dumps({"total": len(decisions), "counts": counts,
-                      "already_archived": archived,
+                      "already_archived": archived, "excluded": excluded,
                       "uncertain_kept_new": len(uncertain)}, ensure_ascii=False, indent=2))
     return 0
 

@@ -39,10 +39,13 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 TZ = timezone(timedelta(hours=8))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-D = ("/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采")
-BACKUP = os.path.join(PROJECT_ROOT, "data", "wechat_archive", "trim_backup")
-LOG = os.path.join(PROJECT_ROOT, "data", "wechat_archive", "trim_log.jsonl")
+WORK_ROOT = os.environ.get("DOC_INGEST_WORKDIR", os.path.join(os.path.expanduser("~"), ".doc-ingest"))
+D = os.environ.get(
+    "TRIM_TARGET_DIR",
+    "/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采")
+BACKUP = os.path.join(WORK_ROOT, "data", "wechat_archive", "trim_backup")
+LOG = os.path.join(WORK_ROOT, "data", "wechat_archive", "trim_log.jsonl")
+STATE = os.path.join(WORK_ROOT, "data", "wechat_archive", "trim_state.json")
 
 END_MARKS = ("（完）", "（未完待续）", "（未完）")
 CUT_ANCHORS = ("404文章获取", "个人网站：zlsdcg", "个人网站：")

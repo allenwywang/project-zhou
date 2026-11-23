@@ -30,8 +30,8 @@ from pathlib import Path
 SCHINZA_ROOT = Path(os.environ.get("SCHINZA_ROOT", "/Users/allenwywang/allen个人项目/tools/schinza")).resolve()
 sys.path.insert(0, str(SCHINZA_ROOT))
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "wechat_archive"
+WORK_ROOT = Path(os.environ.get("DOC_INGEST_WORKDIR", Path.home() / ".doc-ingest")).expanduser()
+DATA_DIR = WORK_ROOT / "data" / "wechat_archive"
 RAW_DIR = DATA_DIR / "raw"
 ARTICLES = DATA_DIR / "articles.jsonl"
 STATE = DATA_DIR / "state.json"

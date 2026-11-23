@@ -12,13 +12,15 @@ import urllib.parse
 from collections import Counter
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-D = PROJECT_ROOT / "data" / "wechat_archive"
+WORK_ROOT = Path(os.environ.get("DOC_INGEST_WORKDIR", Path.home() / ".doc-ingest")).expanduser()
+D = WORK_ROOT / "data" / "wechat_archive"
 ARTICLES = D / "articles.jsonl"
 FAILED = D / "failed.jsonl"
 ADS = D / "ads.jsonl"
 RAW = D / "raw"
-OBS = Path("/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采")
+OBS = Path(os.environ.get(
+    "TRIM_TARGET_DIR",
+    "/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采"))
 
 
 def key(link):

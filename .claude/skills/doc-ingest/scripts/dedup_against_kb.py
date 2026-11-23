@@ -18,8 +18,8 @@ import re
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "wechat_archive"
+WORK_ROOT = Path(os.environ.get("DOC_INGEST_WORKDIR", Path.home() / ".doc-ingest")).expanduser()
+DATA_DIR = WORK_ROOT / "data" / "wechat_archive"
 ARTICLES = DATA_DIR / "articles.jsonl"
 SKIP_OUT = DATA_DIR / "skip_titles.txt"
 
@@ -41,7 +41,7 @@ def kb_titles():
     if not KB_ROOT.is_dir():
         return exact, raw
     for p in KB_ROOT.rglob("*.md"):
-        if p.parent.name == "公众号直采":
+        if p.parent.name in ("公众号直采",):
             continue
         stem = p.stem
         # 去掉 YY.MM月-JMxxx- 前缀

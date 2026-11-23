@@ -27,7 +27,9 @@ from http.server import BaseHTTPRequestHandler
 
 LOG_PATH = os.environ.get(
     "MP_REQ_LOG",
-    "/Users/allenwywang/allen个人项目/project-zhou/data/wechat_archive/mp_requests.jsonl",
+    os.path.join(os.environ.get("DOC_INGEST_WORKDIR",
+                 os.path.join(os.path.expanduser("~"), ".doc-ingest")),
+                "data", "wechat_archive", "mp_requests.jsonl"),
 )
 CA_PEM = os.path.expanduser("~/.mitmproxy/mitmproxy-ca.pem")
 

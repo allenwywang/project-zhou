@@ -28,6 +28,8 @@ def main():
     for row in decisions.values():
         if row["decision"] == "new":
             categories["new"] += 1
+        elif row.get("evidence_path", "").startswith("excluded:"):
+            categories["excluded"] += 1
         elif row.get("evidence_path", "").startswith("site:"):
             categories["site_exact"] += 1
         elif row.get("confidence") == 1.0:
@@ -81,6 +83,7 @@ def main():
         f"- 新增归档：{categories['new']} 篇（MD {statuses['md_created']}，PDF 渲染结果见 JSON）",
         f"- 知识库正文精确重复：{categories['kb_exact']} 篇",
         f"- 站内正文精确副本：{categories['site_exact']} 篇",
+        f"- 按排除清单不纳入：{categories['excluded']} 篇",
         f"- 语义复核判重：{categories['semantic_duplicate']} 篇",
         f"- 差异复核保留的同名异文/实质修订版：{len(semantic_new)} 篇（ID 清单见 JSON）",
         f"- 图片引用：{statuses['asset_references']} 个唯一地址；失败 {statuses['asset_failures']} 个",

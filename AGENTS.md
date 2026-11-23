@@ -22,9 +22,10 @@
 ```
 project-zhou/
 ├── .claude/CLAUDE.md           # Claude 入口指针，不承载事实；冲突以本文为准
+├── .claude/skills/doc-ingest/  # 【核心技能】统管三管线；公众号管线脚本在此（~/.claude/skills/doc-ingest 为其软链）
 ├── scripts/                    # sync.py（蓝奏云主控，§5.1）/ pdf_to_md.py+md_layout.py+test_md_layout.py（§4.5/§6）/
 │                                # naming.py+audit_dates.py+archive_pdfs.py+backup_to_external.py（§4.7/§4.8）/
-│                                # wechat_*.py+trim_promo_tail.py+mp_req_logger.py（公众号管线）/ zlsdcg_*.py（个人站，§5.6/§5.7）/
+│                                # zlsdcg_*.py（个人站，§5.6/§5.7）
 │                                # fetch_jianguoyun.py+parse_html.py+download.py+extract.py（旧版，分步调试用）
 ├── data/                       # 运行时数据（gitignore）：坚果云页快照、zlsdcg_archive/、wechat_archive/
 ├── progress.json               # 同步进度（唯一状态源，gitignore）
@@ -160,7 +161,7 @@ python3 pdf_to_md.py [--auto|--mode light|medium|full]   # 默认 light（转换
 pip install playwright pdfplumber PyMuPDF
 brew install p7zip               # 7z 命令，需用于 .rar / .7z 以及 zip fallback
 ```
-`playwright install chromium` 可选——现役用 `channel="chrome"` 绕过（见 §7.5）。
+`playwright install chromium` 可选——现役用 `channel="chrome"`（§7.5）。
 
 ### 5.4 外置盘备份（手动，需先挂载外置盘）
 
@@ -200,7 +201,7 @@ zlsdcg_fetch.py → zlsdcg_index_kb.py → zlsdcg_process.py --prepare → zlsdc
 
 ## 6. 测试与质检
 
-**没有正式的 pytest / unittest 测试目录**（`scripts/test_md_layout.py` 是独立回归脚本）。质检有三种形态：
+无 pytest/unittest 测试目录（`test_md_layout.py` 是独立回归脚本）。质检三种形态：
 
 1. **PDF → Markdown 双引擎交叉质检**（`_compare_pages`，`pdfplumber` + `PyMuPDF` 逐页比字符数）：`diff_ratio > 0.15` → `warn`；一侧无文本、纯图片页 → `error`；含图且文本 <50 字符 → `warn`；末页一致判空且其余页有内容 → `ok`（中间空白页仍 `warn`）。结果落 `_qc_report.json`。**历史补档仍有警告，不能声称全库 QC 无警告。**
 2. **离线复跑**——`progress.json` 充当"测试 fixture"。每次同步后增量记录历史，回看 `total_downloaded` / `history[].count` 判断当次稳态。
@@ -257,13 +258,13 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 - **不要移除** `pdf_to_md.py::_convert_light` 里的 `md_layout.layout()` 调用、门禁判断或 `md_content == raw_md` 断言，也不要把 `do_format` 默认值改成 `False`（全库排版成果不回归的唯一防线；`--no-format` 只用于诊断）。
 - **不要删掉** `zlsdcg_finalize_review.py` 的「同一 wordpress_id / 来源链接已在知识库 → 判重复」判定（否则增量重跑会重复发布已归档文章）；**不要在** `zlsdcg_verify.py` 里写死源站文章总数（读 `fetch_report.json` 的 `fetched_total`）；**不要**把 `zlsdcg_download_assets.py` 与 `zlsdcg_finalize_assets.py` 连着跑（前者改写暂存 MD 的图片引用，后者随后误判失败并阻断发布）。
 - **不要**让公众号管线的 `trim_promo_tail.py` / 渲染改动个人站管线的 MD——`公众号直采/` 是两条管线共用的目录（§2），公众号管线只处理 `source=mp.weixin.qq.com` 的文件。
-- **不要**未经用户明确指定并二次确认就跑全量同步——三条通道默认只做增量（skill `doc-ingest`「执行铁律」）：微信 `fetch --since-days 30`（不带 `--since-days`/`--full` 会直接拒绝），蓝奏云 `run_lanzou_sync.sh` 续跑，个人站 `run_zlsdcg_sync.sh prepare|publish`；怀疑漏抓先跑对账定位缺口，不要整站重来。
+- **不要**未经用户明确指定并二次确认就跑全量同步——三条通道默认只做增量（skill `doc-ingest`「执行铁律」）：微信 `fetch --since-days 30`（不带 `--since-days`/`--full` 直接拒绝），蓝奏云 `run_lanzou_sync.sh` 续跑，个人站 `run_zlsdcg_sync.sh prepare|publish`；怀疑漏抓先跑对账定位缺口，别整站重来。
 
 ---
 
 ## 10. 版本/状态速览
 
-- 主推入口 `scripts/sync.py`；Markdown 只用 `light`（双引擎），`medium`/`full` 是预留接口。
+- 主推入口 `scripts/sync.py`；Markdown 只用 `light`（双引擎）。
 - **排版**：2026-11-12 全量排版完成，此后转换即排版（§4.5）。
 - **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221、外篇 1–9、JM 1–1148、Python 1–925、Python 外篇 1–348（合订本须展开范围）。知识库缺 JM5 的 MD；资料库 JM5 PDF 实为「春节贺词」错标副本。
 - 归档：**单目的地**（只进项目资料库，增量不覆盖、幂等；知识库只放 MD），规则见 §4.7。

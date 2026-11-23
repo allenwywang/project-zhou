@@ -28,3 +28,11 @@ Thumbs.db
 # we-mp-rss 容器持久化数据（SQLite/缓存/导出），不入仓
 we-mp-rss/
 
+
+# doc-ingest 技能的运行时依赖（随技能走，但不入仓）
+# - wapi-venv/：94MB 本机虚拟env（可用 skill 内脚本重建）
+# - wechat-download-api/：上游独立 git 仓库的本地克隆，**含 .env 里的活凭据**，严禁入仓
+.claude/skills/doc-ingest/services/wapi-venv/
+.claude/skills/doc-ingest/services/wechat-download-api/
+.claude/skills/doc-ingest/**/__pycache__/
+.claude/skills/doc-ingest/**/*.log
