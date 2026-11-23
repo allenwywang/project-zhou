@@ -35,6 +35,17 @@ def main():
         else:
             categories["semantic_duplicate"] += 1
     years = collections.Counter(item["year"] for item in manifest)
+    # 上一轮 = history 里源站篇数更少的那一轮（同一轮的快照不算上一轮）。
+    earlier = []
+    for candidate in sorted((WORK / "history").glob("*/final_report.json")):
+        prior = json.loads(candidate.read_text(encoding="utf-8"))
+        if prior.get("source_posts", 0) < len(decisions):
+            earlier.append((candidate, prior))
+    scope_line = ""
+    if earlier:
+        latest, prior = earlier[-1]
+        scope_line = (f"- 本轮范围：增量（上一轮记录 {latest.parent.name}："
+                      f"源站 {prior['source_posts']} 篇，新增 {prior['decisions'].get('new', 0)} 篇）")
     reviewed_ids = {row["id"] for path in (WORK / "semantic_batches").glob("batch-*.json")
                     for row in json.loads(path.read_text(encoding="utf-8"))}
     semantic_new = [int(key) for key in reviewed_ids if decisions[str(key)]["decision"] == "new"]
@@ -56,6 +67,7 @@ def main():
                                            if decisions[str(key)]["decision"] == "duplicate"),
         "media_only_posts": [item["id"] for item in manifest if is_media_only(item["staging_md"])],
         "pdf_linked_image_repairs": json.loads((WORK / "pdf_repair_replacements.json").read_text(encoding="utf-8"))["ids"],
+        "scope": scope_line,
         "published_md_difference_exceptions": [{"id": 55, "detail": "现有发布稿将源站‘喝喝了’写为‘呵呵了’；保留发布稿，暂存稿同步该两字，未重写知识库文件。"}],
         "filename_suffix_collisions": [item["id"] for item in manifest if item["stem"].endswith(f"_wp{item['id']}")],
         "verification_issues": verification["issues"],
@@ -63,7 +75,8 @@ def main():
     }
     (WORK / "final_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     lines = [
-        "# zlsdcg.com 全量抓取、去重与归档报告", "",
+        "# zlsdcg.com 抓取、去重与归档报告", "",
+        scope_line,
         f"- 源站文章：{len(decisions)} 篇",
         f"- 新增归档：{categories['new']} 篇（MD {statuses['md_created']}，PDF 渲染结果见 JSON）",
         f"- 知识库正文精确重复：{categories['kb_exact']} 篇",
@@ -71,10 +84,10 @@ def main():
         f"- 语义复核判重：{categories['semantic_duplicate']} 篇",
         f"- 差异复核保留的同名异文/实质修订版：{len(semantic_new)} 篇（ID 清单见 JSON）",
         f"- 图片引用：{statuses['asset_references']} 个唯一地址；失败 {statuses['asset_failures']} 个",
-        f"- 浏览器 blob 地址恢复：{statuses['recovered_blob_images']} 张（依据源站 WordPress 媒体 API）",
+        f"- 浏览器 blob 地址恢复：{statuses['recovered_blob_images']} 张（依据源站 WordPress 媒体 API；blob_media_recovery.json 为跨轮输入）",
         f"- 同名文件后缀冲突：{len(report['filename_suffix_collisions'])} 篇",
         f"- 纯图片文章：{report['media_only_posts']}",
-        f"- 链接图片 PDF 修复：{len(report['pdf_linked_image_repairs'])} 篇（修复后全部重新验收通过）",
+        f"- 链接图片 PDF 修复：{len(report['pdf_linked_image_repairs'])} 篇（pdf_repair_replacements.json 为跨轮记录，非本轮新增）",
         "- 发布稿差异例外：WordPress ID 55，现有稿‘呵呵了’与源站‘喝喝了’相差两字；未重写知识库文件，详见 JSON",
         f"- 最终验收：{'通过' if report['verified'] else '未通过'}；问题 {len(verification['issues'])} 项", "",
         "## 新增文章年份分布", "",

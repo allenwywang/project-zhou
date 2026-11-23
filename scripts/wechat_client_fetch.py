@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 SCHINZA_ROOT = Path(os.environ.get("SCHINZA_ROOT", "/Users/allenwywang/allen个人项目/tools/schinza")).resolve()
@@ -44,6 +45,24 @@ CAPTURE_WAIT = int(os.environ.get("CAPTURE_WAIT", "600"))
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def article_key(link):
+    """文章的稳定身份：mid+idx。
+
+    微信的 link 带 sn / chksm / key 等运行期参数，同一篇文章在不同轮抓取里
+    link 字符串不同，按 link 去重会漏判；mid+idx 才是跨轮稳定的标识。
+    解析不出时退回 link 本身。
+    """
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
+    except Exception:
+        return link
+    mid = (query.get("mid") or [""])[0]
+    idx = (query.get("idx") or [""])[0]
+    if mid and idx:
+        return f"{mid}:{idx}"
+    return link
 
 
 def ensure_dirs():
@@ -150,10 +169,23 @@ def cmd_fetch(args):
         f"每 {args.cooldown_every} 页冷却 {args.cooldown_extra}s 上限 {args.max_pages} 页")
     log(f"  预计 {args.max_pages * args.sleep / 60:.0f} 分钟内完成；遇风控立即停止")
 
+    since_days = getattr(args, "since_days", 0) or 0
+    full = bool(getattr(args, "full", False))
+    if since_days > 0:
+        days = since_days
+        log(f"增量模式：只翻最近 {since_days} 天（页面全早于该范围即停）")
+    elif full:
+        days = None                     # None = 全部
+        log("[WARN] 全量模式：翻到空页为止（106 页/约 18 分钟，风控与配额成本最高）")
+    else:
+        log("[拒绝] 默认只同步增量：全量拉取需要显式 --full，且必须先与用户二次确认。")
+        log("        增量用法：fetch --since-days 30（只翻最近 30 天）")
+        log("        全量用法：fetch --full   ← 执行前须向用户说明代价并得到明确确认")
+        return 2
     t0 = time.time()
     result = fetch_history_days(
         cred,
-        days=None,                      # None = 全部
+        days=days,
         max_pages=args.max_pages,
         count=args.count,
         sleep_s=args.sleep,
@@ -176,31 +208,48 @@ def cmd_fetch(args):
     if not arts:
         return 3
 
-    seen = set()
+    records = []
     if ARTICLES.exists():
         for line in ARTICLES.read_text(encoding="utf-8").splitlines():
             try:
-                seen.add(json.loads(line).get("link"))
+                record = json.loads(line)
             except Exception:
-                pass
-
-    new = 0
-    with ARTICLES.open("a", encoding="utf-8") as f:
-        for a in arts:
-            link = a.get("link") or a.get("url") or ""
-            if not link or link in seen:
                 continue
-            seen.add(link)
-            f.write(json.dumps({
-                "aid": a.get("aid", ""),
-                "title": a.get("title", ""),
-                "link": link,
-                "publish_time": a.get("publish_ts") or a.get("publish_time") or 0,
-                "author": a.get("author", ""),
-                "digest": a.get("digest", ""),
-            }, ensure_ascii=False) + "\n")
-            new += 1
-    log(f"[OK] 写入 articles.jsonl：新增 {new}，累计 {len(seen)}")
+            if record.get("link"):
+                records.append(record)
+    # 同一篇文章在不同轮抓取里 link 的 sn 等运行期参数会变，按 link 去重会漏判，
+    # 索引里就会出现同一篇的重复记录。用 mid+idx 这个稳定身份归并。
+    by_key = {}
+    for record in records:
+        by_key[article_key(record["link"])] = record
+    seen = set(by_key)
+    merged = list(by_key.values())
+    new = 0
+    for a in arts:
+        link = a.get("link") or a.get("url") or ""
+        if not link:
+            continue
+        key = article_key(link)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "aid": a.get("aid", ""),
+            "title": a.get("title", ""),
+            "link": link,
+            "publish_time": a.get("publish_ts") or a.get("publish_time") or 0,
+            "author": a.get("author", ""),
+            "digest": a.get("digest", ""),
+        })
+        new += 1
+    temporary = ARTICLES.with_suffix(".jsonl.tmp")
+    with temporary.open("w", encoding="utf-8") as f:
+        for record in merged:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    temporary.replace(ARTICLES)
+    dropped = len(records) - len(by_key)
+    log(f"[OK] 写入 articles.jsonl：新增 {new}，累计 {len(seen)}"
+        + (f"（归并重复记录 {dropped} 条）" if dropped else ""))
 
     st = {}
     if STATE.exists():
@@ -278,6 +327,10 @@ def main():
     x = sub.add_parser("extract"); x.set_defaults(fn=cmd_extract)
     f = sub.add_parser("fetch")
     f.add_argument("--max-pages", type=int, default=250)
+    f.add_argument("--since-days", type=int, default=0,
+                   help="增量：只翻最近 N 天。翻页到页面全部早于 N 天前即停")
+    f.add_argument("--full", action="store_true",
+                   help="全量拉取（默认禁止）：106 页/约 18 分钟，须先与用户二次确认")
     f.add_argument("--count", type=int, default=10)       # 客户端原生值，最不显眼
     f.add_argument("--sleep", type=float, default=4.5)    # 拉长间隔，降低风控概率
     f.add_argument("--jitter", type=float, default=0.25)

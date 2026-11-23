@@ -25,6 +25,7 @@
 """
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -128,6 +129,53 @@ def load_articles():
 
 def article_key(link):
     return hashlib.sha1(norm_link(link).encode()).hexdigest()[:16]
+
+
+def stable_id(link):
+    """跨轮稳定的文章身份：mid+idx。
+
+    link 里的 sn / chksm / key 等是运行期参数，同一篇文章在不同轮抓取里
+    link 字符串不同。用它做断点键，否则每轮都会把存量文章重抓一遍。
+    """
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
+    except Exception:
+        return norm_link(link)
+    mid = (query.get("mid") or [""])[0]
+    idx = (query.get("idx") or [""])[0]
+    return f"{mid}:{idx}" if mid and idx else norm_link(link)
+
+
+def fetched_ids():
+    """已经抓到正文的文章（按稳定身份）：扫 raw 目录，用文件里记录的 link 反解。"""
+    ids = set()
+    for path in glob.glob(os.path.join(RAW_DIR, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            continue
+        link = payload.get("link") or ""
+        if link:
+            ids.add(stable_id(link))
+    return ids
+
+
+def failed_ids():
+    """已确认永久失效（违规/删除）的文章（按稳定身份）。"""
+    ids = set()
+    if not os.path.exists(FAILED):
+        return ids
+    with open(FAILED, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            link = record.get("link") or ""
+            if link:
+                ids.add(stable_id(link))
+    return ids
 
 
 def raw_path(link):
@@ -299,7 +347,11 @@ def content_phase(deadline):
     if not arts:
         log("列表为空，跳过正文阶段")
         return
-    todo = [a for a in arts if not os.path.exists(raw_path(a["link"]))]
+    # 断点按稳定身份（mid+idx）判定：link 的 sn 每轮都变，用整条 link 做键会
+    # 把存量文章全部重抓一遍；已确认永久失效的也不必每轮重试。
+    done, dead = fetched_ids(), failed_ids()
+    todo = [a for a in arts
+            if stable_id(a["link"]) not in done and stable_id(a["link"]) not in dead]
     log(f"正文阶段：共 {len(arts)} 篇，待抓 {len(todo)} 篇，初始间隔 {CONTENT_INTERVAL}s")
 
     interval = float(CONTENT_INTERVAL)
@@ -525,6 +577,13 @@ def render_one(rec, data, force=False):
         dt = datetime.now(TZ)
     author = data.get("author") or rec.get("author") or NICKNAME
 
+    # 增量：目标 MD 已存在就直接返回，不再转换正文、不再查图片。
+    # （原先先转换后判断，等于每轮把全库文章重解析一遍。）
+    fname = f"{dt.strftime('%Y%m%d')}_{_safe_title(title)}.md"
+    dest = os.path.join(OBSIDIAN_DIR, fname)
+    if os.path.exists(dest) and not force:
+        return dest
+
     html = data.get("content") or ""
     body = ""
     if html.strip().startswith("<"):
@@ -550,11 +609,6 @@ def render_one(rec, data, force=False):
             body = "> 本文为纯媒体消息（视频/音频/图片分享），无正文文本。"
         note = "media"
 
-    fname = f"{dt.strftime('%Y%m%d')}_{_safe_title(title)}.md"
-    dest = os.path.join(OBSIDIAN_DIR, fname)
-    if os.path.exists(dest) and not force:
-        return dest
-
     front = "\n".join([
         "---",
         f"title: {_yaml_str(title)}",
@@ -569,12 +623,33 @@ def render_one(rec, data, force=False):
     return dest
 
 
+def ad_ids():
+    """已判定为广告的文章（按稳定身份）。判过的就不再渲染，避免反复记账/复活。"""
+    ids = set()
+    if not os.path.exists(ADS):
+        return ids
+    with open(ADS, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            link = record.get("link") or ""
+            if link:
+                ids.add(stable_id(link))
+    return ids
+
+
 def render_phase(force=False):
     n_new = n_skip = n_bad = n_media = n_ads = 0
     arts = load_articles()
+    known_ads = ad_ids()
     for rec in arts:
         p = raw_path(rec["link"])
         if not os.path.exists(p):
+            continue
+        if stable_id(rec["link"]) in known_ads:
+            n_ads += 1
             continue
         try:
             payload = json.load(open(p, encoding="utf-8"))

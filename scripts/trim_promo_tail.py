@@ -46,6 +46,8 @@ LOG = os.path.join(PROJECT_ROOT, "data", "wechat_archive", "trim_log.jsonl")
 
 END_MARKS = ("（完）", "（未完待续）", "（未完）")
 CUT_ANCHORS = ("404文章获取", "个人网站：zlsdcg", "个人网站：")
+# 截断规则版本：改规则时必须 bump，否则 trim_state 会把旧文件跳过、不再重判。
+RULE_VERSION = "2026-11-23.1"
 BOOK_AD_MARK = "特惠价"
 
 
@@ -60,9 +62,13 @@ def find_cut_line(lines):
             if ("zlsdcg" in rest or "404文章获取" in rest or "更多交流" in rest
                     or "weibo.com" in rest or "觅圈" in rest or "孤苑白首" in rest):
                 return i
-    # 2) 无结束符：用引流锚点（404 段 / 个人网站）
+    # 2) 无结束符：用引流锚点（404 段 / 个人网站 / 作者的引流尾块）。
+    #    引流尾块连同它后面的配图都不属于正文（配图与正文无关），一并截掉。
     for i, ln in enumerate(lines):
-        if ln.strip().startswith(("404文章获取", "个人网站：")):
+        s = ln.strip()
+        if s.startswith(("404文章获取", "个人网站：")):
+            return i
+        if "更多交流" in s and any(m in s for m in ("芥末圈", "小红圈", "孤苑白首")):
             return i
     # 3) 图书广告特例：正文后直接接书价
     for i, ln in enumerate(lines):
@@ -75,11 +81,44 @@ def find_cut_line(lines):
 
 
 def main():
+    force = "--force" in sys.argv
     os.makedirs(BACKUP, exist_ok=True)
     files = sorted(glob.glob(os.path.join(D, "*.md")))
-    n_cut = n_keep = 0
+    n_cut = n_keep = n_skip = n_foreign = 0
+    # 增量：记住每个 MD 上次处理时的 (mtime, size)，未变更的跳过，不再全库扫描。
+    state = {}
+    if os.path.exists(STATE):
+        try:
+            with open(STATE, encoding="utf-8") as fh:
+                saved = json.load(fh)
+            # 规则版本变了，旧状态作废（否则改规则后旧文件会被跳过，不再重判）。
+            if isinstance(saved, dict) and saved.get("version") == RULE_VERSION:
+                state = saved.get("files", {})
+            else:
+                print(f"[OK] 规则版本变化（{saved.get('version') if isinstance(saved, dict) else '未知'}"
+                      f" → {RULE_VERSION}），重新扫描全部 MD")
+        except Exception:
+            state = {}
     logf = open(LOG, "a", encoding="utf-8")
     for f in files:
+        name = os.path.basename(f)
+        # 只处理公众号管线自己的 MD（frontmatter source 是 mp.weixin.qq.com）。
+        # 公众号直采目录是两条管线共用的：个人站管线的 MD（source=zlsdcg.com）
+        # 归它自己管，公众号管线不得改写。
+        try:
+            head = open(f, encoding="utf-8", errors="replace").read(800)
+        except OSError:
+            continue
+        source = re.search(r'^source:\s*"([^"]+)"\s*$', head, re.M)
+        if source and not source.group(1).startswith("https://mp.weixin.qq.com"):
+            n_foreign += 1
+            continue
+        stat = os.stat(f)
+        stamp = [int(stat.st_mtime), stat.st_size]
+        if not force and state.get(name) == stamp:
+            n_skip += 1
+            continue
+        state[name] = stamp
         with open(f, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
         cut = find_cut_line(lines)
@@ -95,7 +134,6 @@ def main():
         if new == orig:
             n_keep += 1
             continue
-        name = os.path.basename(f)
         shutil.copy2(f, os.path.join(BACKUP, name))
         with open(f, "w", encoding="utf-8") as fh:
             fh.write(new)
@@ -105,7 +143,12 @@ def main():
             "kept_bytes": len(new.encode()), "at": datetime.now(TZ).isoformat(timespec="seconds"),
         }, ensure_ascii=False) + "\n")
     logf.close()
-    print(f"处理 {len(files)} 个 MD：截断 {n_cut}，无需处理 {n_keep}")
+    temporary = STATE + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        json.dump({"version": RULE_VERSION, "files": state}, fh, ensure_ascii=False)
+    os.replace(temporary, STATE)
+    print(f"处理 {len(files)} 个 MD：截断 {n_cut}，无需处理 {n_keep}，跳过未变更 {n_skip}，"
+          f"跳过其他管线 {n_foreign}")
     print(f"备份目录：{BACKUP}")
     print(f"日志：{LOG}")
 

@@ -21,7 +21,8 @@ def main():
     decisions = json.loads((WORK / "review_decisions.json").read_text(encoding="utf-8"))
     raw = [json.loads(line) for line in (WORK / "posts.jsonl").read_text(encoding="utf-8").splitlines() if line]
     issues = []
-    if len({item["id"] for item in raw}) != 2674:
+    fetch_report = json.loads((WORK / "fetch_report.json").read_text(encoding="utf-8"))
+    if len({item["id"] for item in raw}) != fetch_report["fetched_total"]:
         issues.append("source ID count changed")
     if {int(key) for key in decisions} != {item["id"] for item in raw}:
         issues.append("review decision coverage is not all source posts")

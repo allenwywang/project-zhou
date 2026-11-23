@@ -69,6 +69,10 @@ def trim_promo(text):
             if plain.startswith(("404文章获取", "个人网站：")):
                 cut = index
                 break
+            # 作者的引流尾块（连同其后的配图）不属于正文。
+            if "更多交流" in plain and any(m in plain for m in ("芥末圈", "小红圈", "孤苑白首")):
+                cut = index
+                break
     if cut is not None:
         lines = lines[:cut]
     while lines and not lines[-1].strip():

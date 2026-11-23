@@ -41,6 +41,8 @@ import naming    # noqa: E402
 
 HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
 MARKDOWN_DIR = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
+# 蓝奏云管线的 MD 在 JM系列/ 子目录（2026-11-18 起），公众号直采在平级目录。
+JM_MD_DIR = MARKDOWN_DIR / "JM系列"
 LIBRARY_DIR = PROJECT_ROOT / "周老师茶馆历史文档"
 DOWNLOAD_DIR = PROJECT_ROOT / "茶馆杂谈文件同步"
 
@@ -162,9 +164,11 @@ def build_para_map(md_text, pdf_path):
 
 
 def export(name, out_dir, with_src=True):
-    md_path = MARKDOWN_DIR / name
+    md_path = JM_MD_DIR / name
     if not md_path.is_file():
-        raise SystemExit("[FAIL] MD 不存在: %s" % md_path)
+        md_path = MARKDOWN_DIR / name
+    if not md_path.is_file():
+        raise SystemExit("[FAIL] MD 不存在: %s" % name)
 
     stem = md_path.stem
     dest = out_dir / stem

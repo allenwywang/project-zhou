@@ -2,14 +2,33 @@
 """Merge independent review decisions and stage only evidence-backed new posts."""
 import collections
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "data" / "zlsdcg_archive"
+KB = Path("/Users/allenwywang/allen个人项目/历史学习资料/历史学习/raw/articles/茶馆杂谈/公众号直采")
 
 
 def read_jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def published_articles():
+    """知识库中已归档文章的标识索引：wordpress_id 与来源链接 -> 文件路径。"""
+    mapping = {}
+    for path in KB.glob("*.md"):
+        try:
+            head = path.read_text(encoding="utf-8")[:600]
+        except OSError:
+            continue
+        identifier = re.search(r'^wordpress_id:\s*"?(\d+)"?\s*$', head, re.M)
+        if identifier:
+            mapping.setdefault(identifier.group(1), str(path))
+        source = re.search(r'^source:\s*"([^"]+)"\s*$', head, re.M)
+        if source:
+            mapping.setdefault(source.group(1), str(path))
+    return mapping
 
 
 def main():
@@ -50,6 +69,21 @@ def main():
         decisions[post_id] = {"id": post_id, "decision": "duplicate",
                               "confidence": 1.0, "evidence_path": path,
                               "reason": "统一正文规范化后SHA-256完全一致，机械判重"}
+    # 增量重跑：文章已在知识库（同一 wordpress_id 或同一来源链接）即视为已归档，
+    # 不再重复发布。机械判重兜不住两种情况——纯图片/空正文文章无从比对，
+    # 以及知识库副本被脱敏改写（姓名占位）导致正文哈希不再相等。
+    published = published_articles()
+    archived = 0
+    for row in results:
+        if row["id"] in decisions and decisions[row["id"]]["decision"] == "duplicate":
+            continue
+        evidence = published.get(str(row["id"])) or published.get(row["link"])
+        if not evidence:
+            continue
+        decisions[row["id"]] = {"id": row["id"], "decision": "duplicate",
+                                "confidence": 1.0, "evidence_path": evidence,
+                                "reason": "同一 wordpress_id/来源链接已在知识库归档（增量重跑不重复发布）"}
+        archived += 1
     review_ids = {row["id"] for row in results if row["status"] != "candidate_new"
                   or row["nearest"] and row["nearest"]["body_similarity"] >= 0.90
                   or row["site_exact_body_ids"]}
@@ -59,7 +93,8 @@ def main():
             incomplete.append(f"missing reviewed decision: {post_id}")
     # Default for unreviewed candidates is new: no KB near match or exact match.
     for row in results:
-        if row["id"] not in review_ids:
+        # 已有判定的（机械判重、已归档）不被默认值覆盖。
+        if row["id"] not in review_ids and row["id"] not in decisions:
             decisions[row["id"]] = {"id": row["id"], "decision": "new",
                                      "confidence": 1.0, "evidence_path": "",
                                      "reason": "标题、正文均无知识库命中，且站内无重复ID"}
@@ -90,9 +125,11 @@ def main():
             decisions[row["id"]].update({"evidence_path": valid_paths[0],
                                          "reason": "统一正文规范化后SHA-256完全一致，机械判重"})
         elif row["status"] == "review_empty_body" and not valid_paths:
-            decisions[row["id"]] = {"id": row["id"], "decision": "new",
-                                    "confidence": 1.0, "evidence_path": "",
-                                    "reason": "纯图片正文，旧空文本稿不构成重复证据"}
+            # 已归档判定（同一 wordpress_id/来源链接）优先，不把它翻回“新增”。
+            if decisions[row["id"]]["decision"] != "duplicate":
+                decisions[row["id"]] = {"id": row["id"], "decision": "new",
+                                        "confidence": 1.0, "evidence_path": "",
+                                        "reason": "纯图片正文，旧空文本稿不构成重复证据"}
     if incomplete:
         (WORK / "review_incomplete.json").write_text(
             json.dumps(incomplete, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -115,6 +152,7 @@ def main():
          "uncertain_kept_new": [row["id"] for row in uncertain]}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     print(json.dumps({"total": len(decisions), "counts": counts,
+                      "already_archived": archived,
                       "uncertain_kept_new": len(uncertain)}, ensure_ascii=False, indent=2))
     return 0
 

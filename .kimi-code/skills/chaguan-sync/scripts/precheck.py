@@ -69,7 +69,10 @@ import naming    # noqa: E402
 
 HISTORY_KB_ROOT = PROJECT_ROOT.parent / "历史学习资料"
 MARKDOWN_DIR = HISTORY_KB_ROOT / "历史学习" / "raw" / "articles" / "茶馆杂谈"
-QC_REPORT = MARKDOWN_DIR / "_qc_report.json"
+# 蓝奏云管线产出的 MD 与质检报告都在 JM系列/ 子目录（2026-11-18 起）；
+# 父目录那份是历史遗留的旧档，不能当本次转换清单用。
+JM_MD_DIR = MARKDOWN_DIR / "JM系列"
+QC_REPORT = JM_MD_DIR / "_qc_report.json"
 
 TERMINATORS = md_layout.TERMINATORS
 META_RE = md_layout.META_RE
@@ -201,7 +204,7 @@ def analyze(path, max_para=DEFAULT_MAX_PARA, min_para=DEFAULT_MIN_PARA):
 
 def main():
     ap = argparse.ArgumentParser(description="茶馆杂谈 MD 排版机械预检")
-    ap.add_argument("--md-dir", default=str(MARKDOWN_DIR), help="知识库茶馆杂谈 MD 目录")
+    ap.add_argument("--md-dir", default=str(JM_MD_DIR), help="知识库茶馆杂谈 JM系列 MD 目录")
     ap.add_argument("--names", default="", help="逗号分隔的 MD 文件名（显式指定范围）")
     ap.add_argument("--max-para-chars", type=int, default=DEFAULT_MAX_PARA,
                     help="单段长度上限（默认 400）")
