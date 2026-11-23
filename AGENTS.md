@@ -2,13 +2,13 @@
 
 本文件为 AI 编程代理提供项目背景知识，读者对项目一无所知。**事实以代码为准**，本文须与代码现状同步。
 
-> **体量预算**：Codex 项目指令链按 32KiB 合并截断（本文件 26.9KB + 全局 `~/.codex/AGENTS.md` 5.1KB ≈ 32.0KB，余量 <1KB）。**新增内容前先删等量的旧内容**，否则末尾 §9 红线会被静默截断。
+> **体量预算**：Codex 项目指令链按 32KiB 合并截断（本文件约 29KB + 全局约 5KB）。新增内容须同步压缩旧文，保证末尾 §9 红线不被静默截断。
 
 ---
 
 ## 1. 项目概述
 
-**目的**：从坚果云（Jianguoyun）共享页读取蓝奏云（Lanzou Cloud）下载参数，批量下载 → 解压 → PDF 伪装识别 → 转 Markdown → 归档。约每半月人工触发一次，服务于个人历史学习资料整理。
+**目的**：归档茶馆内容到知识库 MD 与项目资料库 PDF。常规来源是坚果云共享页中的蓝奏云文件（约每半月人工触发），另有微信公众号与 zlsdcg.com 个人站管线。蓝奏云流程：下载 → 解压 → PDF 伪装识别 → 转 Markdown → 归档。
 
 **核心痛点**（决定了很多看似"怪异"的设计）：
 - 蓝奏云下载 PDF 时把扩展名伪装成 `.exe`（文件头实际是 `%PDF-`），以绕过安全扫描。
@@ -35,6 +35,7 @@ project-zhou/
 │   ├── backup_to_external.py   # 资料库 → 外置盘增量备份，手动（§4.8）
 │   ├── wechat_client_fetch.py / mp_req_logger.py   # 公众号管线（skill doc-ingest）：凭据捕获/列表
 │   ├── wechat_archive.py / trim_promo_tail.py / final_report.py / dedup_against_kb.py  # 公众号正文抓取/引流清洗/对账
+│   ├── zlsdcg_*.py               # 个人站全量抓取、正文比对、图片下载、发布与验收（§5.6）
 │   └── 归档 skill：~/.claude/skills/doc-ingest/（核心技能，统管两管线；详见其 SKILL.md）
 │   ├── fetch_jianguoyun.py     # 抓页旧版（密码硬编码 0403，与现役不符）
 │   ├── parse_html.py / download.py / extract.py   # 解析/下载/解压旧版，分步调试用
@@ -127,7 +128,7 @@ project-zhou/
 
 `download_entries()` 先做 `[SKIP]` 存在性预检：复用 `_file_matches_short_id()` 短 ID 表匹配 `DOWNLOAD_DIR` 里已有的 `.pdf` / `.exe` / `.zip`，产物已存在的条目直接跳过、**不再启动浏览器**。这是边界日不重复下载的保障，不要绕过。
 
-**下载实现**（2026-11-12）：单次点击 + context 级 `download` 监听（`context.on("page", ...)` 覆盖点击后打开的蓝奏云中转新页面），用 `page.wait_for_timeout()` 泵事件循环等待，事件到达即 `save_as`。**不要**恢复「原 page `expect_download` 空等 60s + 二次点击」的旧写法（对中转页链接必然失败，`Target page ... closed`），也**不要**用 `time.sleep` 等事件——Playwright 同步 API 只在调用其方法时泵事件，`time.sleep` 期间事件不投递，会产生「事件到了但文件没落盘」的假阳性。
+**下载实现**：单次点击 + context 级 `download` 监听（含中转新页面），用 `page.wait_for_timeout()` 泵事件并 `save_as`。不要恢复「原 page `expect_download` 空等 + 二次点击」旧写法，也**不要**用 `time.sleep` 等 Playwright 事件。
 
 ### 4.7 存档分工：知识库只放 MD，PDF 只进资料库
 
@@ -148,11 +149,11 @@ project-zhou/
 
 **年月怎么定（`YY.MM`）**——**JM 编号顺序第一优先**，任何日期来源都不得让编号递增时年月倒退：
 
-1. **坚果云条目日期**（首选）：`index` 的 `MMDD更新`。页面是**跨 5 年累计清单**，年份必须由 `build_entry_dates()` 从**最新一条倒推**，禁止「当前年 + 条目月份」直接拼（历史上因此把 JM1 推成 2021-01）。
-2. **原批次年月**：仅当该批编号集中（剔除「迟到归档」——编号远离批次中位数的单条）。**`2021年01月_` 那 137 条是批量归档日，永不采信**。
+1. **坚果云条目日期**（首选）：`build_entry_dates()` 从最新条目倒推，禁止直接拼当前年。
+2. **原批次年月**：仅编号集中时采用；`2021年01月_` 是批量归档日，永不采信。
 3. **缺口按编号线性插值**，再全局强制单调。
-4. **PDF `creationDate` 最不可靠**（是导出日），仅无其它来源时兜底。
-5. **献词类特例**：新年献词记 `YY.12月`（标题年份是次年，`25.12月-…-2026年新年献词` 归 `历史学习资料-2025`）；春节贺词记春节所在月（2020 春节 1/25 → `20.01月`），文件名用「春节贺词」。
+4. **PDF `creationDate`** 是导出日，仅兜底。
+5. **献词**：新年献词记前一年 `YY.12月`；春节贺词记春节所在月。
 
 `scripts/audit_dates.py` 是这条规则的守门脚本：检查编号/年月倒挂、同编号多份、与坚果云不符、正文内嵌编号笔误。**同步后应跑一次，退出码非 0 即需处理**。注意「同编号、不同标题」= 两篇不同文章（如 JM143 别做投枪 / JM146 愚公移山），**不是重复**；只有同编号且正文逐字相同才算重复副本。
 
@@ -161,10 +162,9 @@ project-zhou/
 ### 4.8 外置盘增量备份（手动执行）
 
 `scripts/backup_to_external.py` 把**项目资料库**（**不是整个 Git 仓库**）增量同步到外置盘：
-- 源：`/Users/allenwywang/allen个人项目/project-zhou/周老师茶馆历史文档`
-- 备：`/Volumes/My PSSD/文档资料/project-zhou`（外置盘根目录对应本机资料库根目录）
+- 源为项目 `周老师茶馆历史文档/`，备为 `/Volumes/My PSSD/文档资料/project-zhou`（对应资料库根目录，不是仓库镜像）。
 
-**目录映射**（`DIR_MAP`，外置盘沿用旧命名，**不重命名目录**）：`历史学习资料-2020及以前`→`历史学习材料`、`历史学习资料-{2021,2022}`→`历史学习材料-{年}`、`历史学习资料项目`→`历史学习资料`、其余同名。
+`DIR_MAP` 保持外置盘旧目录名：`历史学习资料-2020及以前`→`历史学习材料`、`历史学习资料-{2021,2022}`→`历史学习材料-{年}`、`历史学习资料项目`→`历史学习资料`，其余同名，**不要改映射**。
 
 **忽略**：`.DS_Store` 与**所有以 `._` 开头**的 AppleDouble 元数据文件（exFAT 上 macOS 写文件时自动生成的伴随文件）。它们不是用户资料：不参与比对、不计入 extra、也不删除。
 
@@ -201,7 +201,7 @@ python3 pdf_to_md.py --no-format # 仅诊断：跳过排版，正常同步不要
 python3 pdf_to_md.py --auto      # 自动扫描 + 推荐模式
 python3 pdf_to_md.py --mode light|medium|full
 ```
-`medium` / `full` 当前降级到 light（预留接口，TODO 接入 multidoc-transfer-multimodal）。
+`medium` / `full` 当前降级到 light（预留接口）。
 
 ### 5.3 显式依赖
 ```bash
@@ -222,11 +222,13 @@ python3 backup_to_external.py --check   # 只读体检，不写入
 
 ## 5.5 定期同步的标准执行流程（项目级 Skill）
 
-`.kimi-code/skills/chaguan-sync/` 是本项目**定期同步的标准流程入口**：7 阶段（预检 → 导出比对材料 → LLM 语义复查 → 修复门禁 → 规则修正 → 收尾报告）。用户说「同步一下」时自动加载。
+`.kimi-code/skills/chaguan-sync/` 是定期同步标准入口；用户说「同步一下」时加载。其 `precheck.py`、`export_review.py`、`verify_fix.py` 分别负责预检、导出比对材料、修复门禁，均需 `env -u PYTHONPATH /usr/bin/python3`。判据见 skill 的 `references/layout_review_rubric.md`。
 
-三支脚本（需 `env -u PYTHONPATH /usr/bin/python3`）：`precheck.py` 机械预检（信号 `lead_orphaned` / `para_too_long` / `para_dangling`，**只报证据不下结论**，阈值用已验收的 1241 篇存量库反标定）；`export_review.py` 导出 `md.md` + 带 `[断]/[续]` 标记的 `src.txt` + `para_map.json`；`verify_fix.py` 修复门禁（字符守恒 / H1 / 无三连空行 / 再排版幂等 / 无占位残留，**全绿才能落盘**）。
+### 5.6 zlsdcg.com 个人站管线（一次性全量归档，现役可复跑）
 
-修复两段 = 删掉中间空行、两段文本直接相连（写错会「再排版又拆开」→ 幂等门禁失败）。判据细节见 skill 的 `references/layout_review_rubric.md`。
+入口为 `scripts/zlsdcg_*.py`，数据与报告在 `data/zlsdcg_archive/`。公开 WordPress API 枚举 posts → 正文比对 JM系列与公众号直采 → 差异复核 → 图片本地化 → 独占创建 MD → PDF 年度归档 → 全量验收。命名 `YYYYMMDD_标题`（最长 60 字），同名加 `_wp<ID>`，PDF 同 stem，**不覆盖既有归档**。
+
+正文判重为主；同名异文、实质修订版保留，纯图片文章不得以旧空文本 MD 判重。原始 HTML 只解析不执行；图片限制协议、大小并验文件头。旧域名改指当前主机同路径时保留原始 URL 映射。发布前跑 `zlsdcg_verify.py --pre-publish`，最终跑 `zlsdcg_verify.py` 与 `zlsdcg_final_report.py`。HTML/MD 用 doc-ingest 的 wapi venv；PDF/fitz 用 `env -u PYTHONPATH /usr/bin/python3`（不加 `-I`）。完成快照见 `data/zlsdcg_archive/final_report.md`，数量不在本文重复维护。
 
 ---
 
@@ -276,10 +278,7 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 
 ## 8. 常见调试指引
 
-同步 / 转换 / 复查 / 审计 / 备份各阶段的故障定位（含坚果云封禁、蓝奏云中转页下载失败、
-`.exe` 未改名、`[LAYOUT-FAIL]`、预检误报、`verify_fix` 报错、备份 exit 2 等），
-**统一见 skill 的 `.kimi-code/skills/chaguan-sync/references/troubleshooting.md`**。
-该文档附带存量库标定基线（段落长度分布、各信号命中率），改阈值前必读。
+故障定位统一见 `.kimi-code/skills/chaguan-sync/references/troubleshooting.md`；其中含存量库标定基线，改阈值前必读。
 
 ---
 
@@ -313,7 +312,7 @@ WorkBuddy / CodeBuddy 等宿主会通过 `PYTHONPATH` 注入 `sitecustomize.py`�
 
 - 主推入口 `scripts/sync.py`；Markdown 只用 `light`（双引擎），`medium`/`full` 是预留接口。
 - **排版**：1241 篇存量 MD 已于 2026-11-12 全量排版完成；此后转换即排版（§4.5）。
-- **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221（含 2–38 合订本）、C++ 外篇 1–9、**JM 1–1148**、Python 1–925（含 22-32 合订本）、Python 外篇 1–348，**两边 0 缺号**。知识库 1233 个 `.md`（缺 JM5 的 md）；资料库 1234 个 PDF（含 `20.01月-JM5-社区浅谈.pdf`，内容与 `春节贺词` 逐字相同，属错标编号副本）。**全库体检必须展开合订本编号范围**，否则 Python 23–32 会被误报缺号。
+- **编号完整性（2026-11-12 复核）**：C++ 正篇 1–221、外篇 1–9、JM 1–1148、Python 1–925、Python 外篇 1–348；合订本须展开编号范围。知识库缺 JM5 的 MD；资料库 JM5 PDF 实为「春节贺词」错标副本。
 - 归档：**单目的地**（只进项目资料库，增量不覆盖、幂等；知识库只放 MD），规则见 §4.7。
 - **外置盘备份**：2026-11-01 初始化的 identical 数字已过期（11-12 资料库重命名 + 按年归位）。下次挂载后先 `--check` 再增量同步；手动执行，**不建定时任务**。
 - 历史补档（含从其他目录并入的无编号 JM 资料）部分 Markdown 仍带纯图片页 / 文本差异 QC 警告，**原版 PDF 存档完整**——属已知情况，不是数据缺陷。
